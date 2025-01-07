@@ -13,22 +13,7 @@ df['date'] = pd.to_datetime(df['data'])
 station_df = df[df['station_id'] == 40708]
 january_df = station_df[station_df['date'].dt.month == 1]
 
-# Display the result
-# print(january_df)
-# print(station_df.head())
 
-# # View the last 5 rows
-# print(station_df.tail())
-
-# # View the entire DataFrame
-# plt.figure(figsize=(12, 6))
-# plt.plot(station_df['date'], station_df['SPI'], label='SPI', color='blue')
-# plt.title('SPI Time Series')
-# plt.xlabel('Date')
-# plt.ylabel('SPI')
-# plt.legend()
-# plt.grid(True)
-# plt.show()
 
 # features = ['tmax_m', 'tmax_max', 'tmax_min', 'tmin_m', 'tmin_min', 'tmin_max', 'ntmin_0', 'rrr24', 'sshn', 'tm_m', 't_03_m', 't_09_m', 't_15_m']
 features = ['tmax_m', 'tmin_m', 'rrr24', 'SPI']
