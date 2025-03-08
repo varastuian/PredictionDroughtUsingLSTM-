@@ -9,42 +9,44 @@ import pandas as pd
 import xarray as xr
 from scipy.stats import gamma, norm
 
-df = pd.read_csv("Codes/merged_data.csv")
-df['data'] = pd.to_datetime(df['data'])
 
-
-station_df = df[df['station_id'] == 40708].copy()
-
-station_df['year'] = station_df['data'].dt.year
-station_df['month'] = station_df['data'].dt.month
-
-# Aggregate to monthly precipitation totals using the 'rrr24' column (assumed precipitation)
-monthly_precip = station_df.groupby(['year', 'month'])['rrr24'].sum().reset_index()
-
-# Extract precipitation values from the monthly data
-precip = monthly_precip['rrr24'].values
-
-# Calculate the probability of zero precipitation
+station_df = pd.read_csv(r".\result\40708.csv")
+precip = station_df['rrr24'].values
 zero_prob = np.mean(precip == 0)
-
-# Extract only the non-zero precipitation values for fitting the gamma distribution
 nonzero_precip = precip[precip > 0]
 
-# Fit a gamma distribution to the nonzero precipitation values (fixing the location parameter to 0)
-fit_alpha, fit_loc, fit_beta = gamma.fit(nonzero_precip, floc=0)
+# fit_alpha, fit_loc, fit_beta = gamma.fit(nonzero_precip, floc=0)
 
-# Define a function to compute SPI for a given precipitation value
 def compute_spi(x):
-    if x == 0:
-        # Include the probability of zero precipitation
-        prob = zero_prob
-    else:
-        prob = zero_prob + (1 - zero_prob) * gamma.cdf(x, a=fit_alpha, loc=fit_loc, scale=fit_beta)
-    # Transform cumulative probability to a z-score (SPI value)
-    return norm.ppf(prob)
+    # if x == 0:
+    #     prob = zero_prob
+    # else:
+    #     prob = zero_prob + (1 - zero_prob) * gamma.cdf(x, a=fit_alpha, loc=fit_loc, scale=fit_beta)
+    # return norm.ppf(prob)
+    x = x[x > 0]
+    shape, loc, scale =gamma.fit(x, floc=0)
+    cdf = gamma.cdf(x, shape, loc, scale)
+    spi_values = norm.ppf(cdf)
+    return spi_values
 
-# Apply the function to calculate SPI for each monthly total
-monthly_precip['SPI'] = monthly_precip['rrr24'].apply(compute_spi)
+def compute_spi_timescales(data, timescales):
+    spi_results = {}
+    
+    for scale in timescales:
+        rolling_precip = data['rrr24'].rolling(scale, min_periods=scale).sum()
+        spi_results[f"SPI_{scale}"] = compute_spi(rolling_precip.dropna())
+    return spi_results
 
-# Display the resulting SPI values along with the corresponding year and month
-print(monthly_precip)
+
+with open('./result/withspi.txt', 'w') as f:
+        
+    timescales = [1, 3, 6,9,12,24]  
+    spi_results = compute_spi_timescales(station_df, timescales)
+    
+    for i, (_, row) in enumerate(station_df.iterrows()):
+        date_str = f"{int(row['month'])}/1/{int(row['year'])}"
+        spi_values = " ".join([f"SPI_{scale}: {spi_results[f'SPI_{scale}'][i]:.2f}" if i >= scale - 1 else f"SPI_{scale}: NA" for scale in timescales])
+        f.write(f"{date_str} {row['rrr24']} {spi_values}\n")
+# station_df['SPI'] = station_df['rrr24'].apply(compute_spi)
+# station_df.to_csv('./result/withspi.csv', index=False)
+
