@@ -8,20 +8,19 @@ from torchvision.transforms import ToTensor
 import numpy as np
 import matplotlib.pyplot as plt
 
-df = pd.read_csv('Codes\spi_results.csv')
-df['date'] = pd.to_datetime(df['data'])
-station_df = df[df['station_id'] == 40708]
-january_df = station_df[station_df['date'].dt.month == 1]
+data = pd.read_csv('result\40708spi.txt', parse_dates=['date'], dayfirst=True)
+data.set_index('date', inplace=True)
 
+data.replace(-99, np.nan, inplace=True)
+spi_series = data['spi1'].dropna()
+spi_values = spi_series.values.reshape(-1, 1)
 
+# features = ['tmax_m', 'tmin_m', 'rrr24', 'SPI']
 
-# features = ['tmax_m', 'tmax_max', 'tmax_min', 'tmin_m', 'tmin_min', 'tmin_max', 'ntmin_0', 'rrr24', 'sshn', 'tm_m', 't_03_m', 't_09_m', 't_15_m']
-features = ['tmax_m', 'tmin_m', 'rrr24', 'SPI']
+# target = 'SPI'
 
-target = 'SPI'
-
-scaler = MinMaxScaler()
-scaled_data = scaler.fit_transform(df[features].values)
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(spi_values)
 
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size):
@@ -38,7 +37,7 @@ class LSTMModel(nn.Module):
         out = self.fc(out[:, -1, :])
         return out
 
-class TimeSeriesDataset(Dataset):
+class SPIDataset(Dataset):
     def __init__(self, X, y):
         self.X = X
         self.y = y
@@ -50,16 +49,19 @@ class TimeSeriesDataset(Dataset):
         return self.X[idx], self.y[idx]
     
 
-def create_sequences(data, window_size):
-    sequences = []
-    targets = []
-    for i in range(len(data) - window_size):
-        seq = data[i:i+window_size]
-        target = data[i+window_size, -1]  # target is the last column (SPI)
-        sequences.append(seq)
-        targets.append(target)
-    return np.array(sequences), np.array(targets)
+def create_dataset(dataset, look_back=12):
+    X, y = [], []
+    for i in range(len(dataset) - look_back):
+        X.append(dataset[i:i+look_back, 0])
+        y.append(dataset[i+look_back, 0])
+    return np.array(X), np.array(y)
 
+look_back = 12  # Using the past 12 months to predict the next value
+X, y = create_dataset(spi_scaled, look_back)
+X_tensor = torch.from_numpy(X).float().unsqueeze(2)
+y_tensor = torch.from_numpy(y).float()
+dataset = SPIDataset(X_tensor, y_tensor)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
 
 
@@ -78,12 +80,6 @@ num_epochs = 100
 learning_rate = 0.001
 
 
-X, y = create_sequences(scaled_data, window_size)
-
-# Convert to PyTorch tensors
-X_tensor = torch.tensor(X, dtype=torch.float32)
-y_tensor = torch.tensor(y, dtype=torch.float32)
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 X_tensor = X_tensor.to(device)
 y_tensor = y_tensor.to(device)
@@ -91,8 +87,6 @@ print(f"Using {device} device")
 
 
 
-dataset = TimeSeriesDataset(X_tensor, y_tensor)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 # Initialize the model, loss function, and optimizer
 model = LSTMModel(input_size, hidden_size, num_layers, output_size).to(device)
 print(model)
@@ -104,7 +98,9 @@ model.train()
 for epoch in range(num_epochs):
     for inputs, labels in dataloader:
         outputs = model(inputs)
-        loss = criterion(outputs.squeeze(), labels)
+        # loss = criterion(outputs.squeeze(), labels)
+        loss = criterion(outputs, targets.unsqueeze(1))
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -117,6 +113,30 @@ torch.save(model.state_dict(), 'lstm_model_vahid.pth')
 # Load the saved model for inference
 model.load_state_dict(torch.load('lstm_model_vahid.pth'))
 model.eval()
+
+
+# --- Forecasting ---
+last_sequence = spi_scaled[-look_back:]
+last_sequence = torch.from_numpy(last_sequence).float().unsqueeze(0).unsqueeze(2)  # shape: (1, look_back, 1)
+model.eval()
+with torch.no_grad():
+    forecast = model(last_sequence)
+forecast_value = scaler.inverse_transform(forecast.cpu().numpy())
+print("Forecasted SPI:", forecast_value[0][0])
+
+# --- Plotting the Result ---
+plt.figure(figsize=(10, 5))
+plt.plot(spi_series.index, spi_series.values, label='Historical SPI')
+# Forecast date: assume monthly frequency, so add one month to the last date
+forecast_date = spi_series.index[-1] + pd.DateOffset(months=1)
+plt.plot([spi_series.index[-1], forecast_date],
+         [spi_series.values[-1], forecast_value[0][0]],
+         marker='o', color='red', label='Forecast')
+plt.xlabel('Date')
+plt.ylabel('SPI Value')
+plt.title('SPI Forecast using LSTM (PyTorch)')
+plt.legend()
+plt.show()
 # Prepare test data for prediction
 # test_data = torch.tensor(scaled_data[-seq_length:], dtype=torch.float32).unsqueeze(0)
 # test_data = scaled_data[-window_size:]  # Ensure 12 months
