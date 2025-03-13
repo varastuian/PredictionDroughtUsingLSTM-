@@ -170,8 +170,7 @@ def main():
     print("Forecasted SPI for next month:", forecast_value[0][0])
 
     # ---------------- Multi-Step Forecast (Next 12 Months) ----------------
-    last_sequence_iter = torch.from_numpy(scaled_data[-look_back:]).float().unsqueeze(0).to(device)
-    predicted_spi = forecast_future(model, last_sequence_iter, scaler, forecast_steps=12, device=device)
+    predicted_spi = forecast_future(model, last_sequence_tensor, scaler, forecast_steps=12, device=device)
     forecast_dates = pd.date_range(start=spi_series.index[-1] + pd.DateOffset(months=1), periods=12, freq='MS')
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': predicted_spi.flatten()})
     print("12-Month Forecast for SPI:")
