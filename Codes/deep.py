@@ -160,7 +160,9 @@ def main():
 
     # ---------------- One-Step Forecast ----------------
     last_sequence = scaled_data[-look_back:]
-    last_sequence_tensor = torch.from_numpy(last_sequence).float().unsqueeze(0).unsqueeze(2).to(device)
+    # last_sequence_tensor = torch.from_numpy(last_sequence).float().unsqueeze(0).unsqueeze(2).to(device)
+    last_sequence_tensor = torch.from_numpy(last_sequence).float().unsqueeze(0).to(device)  # Shape: (1, look_back, 1)
+
     model.eval()
     with torch.no_grad():
         forecast = model(last_sequence_tensor)
