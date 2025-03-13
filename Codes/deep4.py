@@ -5,12 +5,13 @@ from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import time
 import os
 
 # ---------------- Data Loading & Preprocessing ----------------
 
-def load_data(file_path, column='spi1', date_format='%d/%m/%Y', delimiter=' '):
+def load_data(file_path, column='spi1', date_format='%m/%d/%Y', delimiter=' ', start_date=None, end_date=None):
     """
     Load and preprocess the data.
     - Reads the file with the given delimiter.
@@ -21,9 +22,12 @@ def load_data(file_path, column='spi1', date_format='%d/%m/%Y', delimiter=' '):
     data = pd.read_csv(file_path, delimiter=delimiter)
     data['date'] = pd.to_datetime(data['date'], format=date_format)
     data.set_index('date', inplace=True)
-    # Replace -99 with NaN and fill missing values (alternatively, you can use interpolation)
     data[column].replace(-99, np.nan, inplace=True)
     data[column].fillna(method='ffill', inplace=True)
+    # if start_date and end_date:
+    #     data = data.loc[start_date:end_date]
+    # data.plot(subplots=True)
+    print(data.head())
     return data
 
 def create_dataset(dataset, look_back=12):
@@ -123,21 +127,42 @@ def main():
     # Load and preprocess data
     data = load_data(file_path, column=spi_column)
     spi_series = data[spi_column]
+    start_date = "1990-01-01"
+    end_date = "1996-01-01"
+    spi_series = spi_series.loc[start_date:end_date]
+    spi_series.plot(title="SPI-1", figsize=(10, 5), marker='o')
+    plt.show()
     spi_values = spi_series.values.reshape(-1, 1)
+
+
 
     # Scale the data
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(spi_values)
 
-    # Create sequences for training
-    X, y = create_dataset(scaled_data, look_back)
-    X_tensor = torch.from_numpy(X).float().unsqueeze(2)  # Shape: (samples, look_back, 1)
-    y_tensor = torch.from_numpy(y).float()
 
-    # Create Dataset and DataLoader
-    dataset = SPIDataset(X_tensor, y_tensor)
-    batch_size = 32
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    # ---------------- Train-Test Split ----------------
+    # Use 80% of the data for training and the remaining for testing.
+    train_size = int(len(scaled_data) * 0.8)
+    train_data = scaled_data[:train_size]
+    # For the test set, include an overlap of look_back to properly form sequences.
+    # test_data = scaled_data[train_size - look_back:]
+    test_data = scaled_data[train_size :]
+
+    # Create datasets for training and testing
+    X_train, y_train = create_dataset(train_data, look_back)
+    X_test, y_test = create_dataset(test_data, look_back)
+
+    # Convert arrays to tensors
+    X_train_tensor = torch.from_numpy(X_train).float().unsqueeze(2)  # (samples, look_back, 1)
+    y_train_tensor = torch.from_numpy(y_train).float()
+    X_test_tensor = torch.from_numpy(X_test).float().unsqueeze(2)
+    y_test_tensor = torch.from_numpy(y_test).float()
+
+    # Create Dataset and DataLoader for training
+    train_dataset = SPIDataset(X_train_tensor, y_train_tensor)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+
 
     # Set device and initialize model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,15 +173,30 @@ def main():
     num_epochs = 100
 
     # Check if a pre-trained model checkpoint exists; if not, train the model
-    checkpoint_path = 'lstm_model_checkpoint.pth'
+    checkpoint_path = 'lstm_model_checkpoint2.pth'
     if os.path.exists(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path))
         print("Loaded pre-trained model.")
     else:
         print("Training model...")
-        train_model(model, dataloader, criterion, optimizer, num_epochs, device)
+        train_model(model, train_loader, criterion, optimizer, num_epochs, device)
         torch.save(model.state_dict(), checkpoint_path)
         print("Model trained and saved.")
+
+# ---------------- Validate on Test Set ----------------
+    # We'll perform one-step predictions for each test sequence.
+    model.eval()
+    predictions = []
+    with torch.no_grad():
+        for i in range(len(X_test_tensor)):
+            input_seq = X_test_tensor[i].unsqueeze(0).to(device)  # shape: (1, look_back, 1)
+            pred = model(input_seq)
+            predictions.append(pred.item())
+
+    predictions = np.array(predictions).reshape(-1, 1)
+    predictions_inv = scaler.inverse_transform(predictions)
+    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
+
 
     # ---------------- One-Step Forecast ----------------
     last_sequence = scaled_data[-look_back:]
@@ -177,6 +217,9 @@ def main():
     print(forecast_df)
 
     # ---------------- Plotting ----------------
+
+    test_dates = spi_series.index[train_size:][:len(y_test)]
+
     plt.figure(figsize=(12, 6))
     plt.plot(spi_series.index, spi_series.values, label='Historical SPI')
     plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
@@ -185,6 +228,10 @@ def main():
     plt.title('SPI Forecast using LSTM')
     plt.legend()
     plt.grid(True)
+    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     plt.show()
 
 if __name__ == '__main__':
