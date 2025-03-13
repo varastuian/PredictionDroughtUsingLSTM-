@@ -20,8 +20,16 @@ spi_values = spi_series.values.reshape(-1, 1)
 scaler = MinMaxScaler(feature_range=(0, 1))
 scaled_data = scaler.fit_transform(spi_values)
 
+
+
+
+look_back = 12  # Using the past 12 months to predict the next value
+X, y = create_dataset(scaled_data, look_back)
+X_tensor = torch.from_numpy(X).float().unsqueeze(2)
+y_tensor = torch.from_numpy(y).float()
+
 class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size):
+    def __init__(self,  input_size=1, hidden_size=50, num_layers=1, output_size=1):
         super(LSTMModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -29,8 +37,8 @@ class LSTMModel(nn.Module):
         self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
         out, _ = self.lstm(x, (h0, c0))
         out = self.fc(out[:, -1, :])
         return out
@@ -61,9 +69,8 @@ y_tensor = torch.from_numpy(y).float()
 dataset = SPIDataset(X_tensor, y_tensor)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
-
-
 # Hyperparameters
+input_size = 1
 input_size = 1
 hidden_size = 64
 num_layers = 2
@@ -97,6 +104,9 @@ for epoch in range(num_epochs):
     for inputs, targets in dataloader:
         inputs = inputs.to(device)
         targets = targets.to(device)
+    for inputs, targets in dataloader:
+        inputs = inputs.to(device)
+        targets = targets.to(device)
         outputs = model(inputs)
         # loss = criterion(outputs.squeeze(), labels)
         loss = criterion(outputs, targets.unsqueeze(1))
@@ -116,6 +126,7 @@ model.load_state_dict(torch.load('lstm_model_vahid.pth'))
 
 
 # --- Forecasting ---
+last_sequence = scaled_data[-look_back:]
 last_sequence = scaled_data[-look_back:]
 last_sequence = torch.from_numpy(last_sequence).float().unsqueeze(0).unsqueeze(2)  # shape: (1, look_back, 1)
 model.eval()
@@ -163,13 +174,13 @@ print(predicted_spi_df)
 
 
 
-plt.figure(figsize=(10, 5))
-plt.plot(predicted_spi_df['Month'], predicted_spi_df['Predicted_SPI'], marker='o', label='Predicted SPI')
-plt.xticks(rotation=45)
-plt.xlabel('Month')
-plt.ylabel('SPI')
-plt.title('Predicted SPI for 2025')
-plt.legend()
-plt.grid()
-plt.tight_layout()
-plt.show()
+# plt.figure(figsize=(10, 5))
+# plt.plot(predicted_spi_df['Month'], predicted_spi_df['Predicted_SPI'], marker='o', label='Predicted SPI')
+# plt.xticks(rotation=45)
+# plt.xlabel('Month')
+# plt.ylabel('SPI')
+# plt.title('Predicted SPI for 2025')
+# plt.legend()
+# plt.grid()
+# plt.tight_layout()
+# plt.show()
