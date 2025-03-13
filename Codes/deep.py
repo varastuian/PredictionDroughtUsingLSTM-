@@ -7,17 +7,15 @@ from torchvision import datasets
 from torchvision.transforms import ToTensor
 import numpy as np
 import matplotlib.pyplot as plt
+import time
 
-data = pd.read_csv('result\40708spi.txt', parse_dates=['date'], dayfirst=True)
+data = pd.read_csv('result/40708spi.txt',delimiter=' ',skiprows=1)
 data.set_index('date', inplace=True)
 
 data.replace(-99, np.nan, inplace=True)
 spi_series = data['spi1'].dropna()
 spi_values = spi_series.values.reshape(-1, 1)
 
-# features = ['tmax_m', 'tmin_m', 'rrr24', 'SPI']
-
-# target = 'SPI'
 
 scaler = MinMaxScaler(feature_range=(0, 1))
 scaled_data = scaler.fit_transform(spi_values)
@@ -48,7 +46,6 @@ class SPIDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
     
-
 def create_dataset(dataset, look_back=12):
     X, y = [], []
     for i in range(len(dataset) - look_back):
@@ -57,16 +54,17 @@ def create_dataset(dataset, look_back=12):
     return np.array(X), np.array(y)
 
 look_back = 12  # Using the past 12 months to predict the next value
-X, y = create_dataset(spi_scaled, look_back)
+X, y = create_dataset(scaled_data, look_back)
 X_tensor = torch.from_numpy(X).float().unsqueeze(2)
 y_tensor = torch.from_numpy(y).float()
+
 dataset = SPIDataset(X_tensor, y_tensor)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
 
 
 # Hyperparameters
-input_size = len(features)
+input_size = 1
 hidden_size = 64
 num_layers = 2
 output_size = 1
@@ -96,7 +94,9 @@ optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 model.train()
 
 for epoch in range(num_epochs):
-    for inputs, labels in dataloader:
+    for inputs, targets in dataloader:
+        inputs = inputs.to(device)
+        targets = targets.to(device)
         outputs = model(inputs)
         # loss = criterion(outputs.squeeze(), labels)
         loss = criterion(outputs, targets.unsqueeze(1))
@@ -109,14 +109,14 @@ for epoch in range(num_epochs):
         print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
 # Save the model
-torch.save(model.state_dict(), 'lstm_model_vahid.pth')
+torch.save(model.state_dict(), f'lstm_model_{int(time.time())}.pth')
 # Load the saved model for inference
 model.load_state_dict(torch.load('lstm_model_vahid.pth'))
-model.eval()
+
 
 
 # --- Forecasting ---
-last_sequence = spi_scaled[-look_back:]
+last_sequence = scaled_data[-look_back:]
 last_sequence = torch.from_numpy(last_sequence).float().unsqueeze(0).unsqueeze(2)  # shape: (1, look_back, 1)
 model.eval()
 with torch.no_grad():
@@ -137,24 +137,6 @@ plt.ylabel('SPI Value')
 plt.title('SPI Forecast using LSTM (PyTorch)')
 plt.legend()
 plt.show()
-# Prepare test data for prediction
-# test_data = torch.tensor(scaled_data[-seq_length:], dtype=torch.float32).unsqueeze(0)
-# test_data = scaled_data[-window_size:]  # Ensure 12 months
-# test_data = torch.tensor(test_data, dtype=torch.float32).unsqueeze(0).to(device)
-
-# # Make predictions
-# with torch.no_grad():
-#     predictions = model(test_data)
-# predictions_np = predictions.cpu().numpy()
-# dummy_array = np.zeros((predictions_np.shape[0], scaler.min_.shape[0]))
-# dummy_array[:, -1] = predictions_np[:, 0] 
-# # Inverse transform predictions to original scale
-# # predictions_rescaled = scaler.inverse_transform(predictions.numpy())
-# predictions_rescaled = scaler.inverse_transform(dummy_array)
-# predicted_spi = predictions_rescaled[:, -1]
-
-# # Print the predictions
-# print("Predicted SPI:", predicted_spi)
 
 last_sequence = scaled_data[-window_size:]  # Assuming scaled_data contains data up to 2024
 last_sequence = torch.tensor(last_sequence, dtype=torch.float32).unsqueeze(0).to(device)  # Add batch dimension
@@ -179,8 +161,7 @@ predicted_spi_df = pd.DataFrame({
 # Print the predictions
 print(predicted_spi_df)
 
-# Plot the predictions
-import matplotlib.pyplot as plt
+
 
 plt.figure(figsize=(10, 5))
 plt.plot(predicted_spi_df['Month'], predicted_spi_df['Predicted_SPI'], marker='o', label='Predicted SPI')
