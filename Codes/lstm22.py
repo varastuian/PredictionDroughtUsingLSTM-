@@ -97,7 +97,7 @@ with torch.no_grad():
 last_sequence = timeseries[-lookback:]
 model.eval()
 predicted = []
-current_sequence = last_sequence.clone()
+current_sequence = last_sequence
 with torch.no_grad():
     for _ in range(lookback):
         prediction = model(current_sequence)
