@@ -6,28 +6,17 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import time
 import os
 
-# ---------------- Data Loading & Preprocessing ----------------
 
-def load_data(file_path, column='spi1', date_format='%m/%d/%Y', delimiter=' ', start_date=None, end_date=None):
-    """
-    Load and preprocess the data.
-    - Reads the file with the given delimiter.
-    - Parses the date column.
-    - Sets the date as index.
-    - Replaces missing values (-99) and fills them (using forward fill).
-    """
+def load_data(file_path, column='spi1', date_format='%m/%d/%Y', delimiter=' ',):
+
     data = pd.read_csv(file_path, delimiter=delimiter)
     data['date'] = pd.to_datetime(data['date'], format=date_format)
     data.set_index('date', inplace=True)
     data[column].replace(-99, np.nan, inplace=True)
     data[column].fillna(method='ffill', inplace=True)
-    # if start_date and end_date:
-    #     data = data.loc[start_date:end_date]
-    # data.plot(subplots=True)
-    print(data.head())
+
     return data
 
 def create_dataset(dataset, look_back=12):
@@ -119,19 +108,17 @@ def forecast_future(model, last_sequence, scaler, forecast_steps=12, device='cpu
 # ---------------- Main Routine ----------------
 
 def main():
-    # File path and parameters
-    file_path = 'result/40708spi.txt'
-    spi_column = 'spi1'
+
     look_back = 12  # Use past 12 months to predict the next value
 
     # Load and preprocess data
-    data = load_data(file_path, column=spi_column)
-    spi_series = data[spi_column]
+    data = load_data('result/40708spi.txt', column='spi1')
+    spi_series = data['spi1']
     start_date = "1990-01-01"
     end_date = "1996-01-01"
     spi_series = spi_series.loc[start_date:end_date]
     spi_series.plot(title="SPI-1", figsize=(10, 5), marker='o')
-    plt.show()
+    
     spi_values = spi_series.values.reshape(-1, 1)
 
 
