@@ -60,7 +60,7 @@ if os.path.exists(checkpoint_path):
 else:
     print("Training model...")
 
-    n_epochs = 2000
+    n_epochs = 800
     for epoch in range(n_epochs):
         model.train()
         for X_batch, y_batch in loader:
@@ -95,9 +95,25 @@ with torch.no_grad():
 
 
 last_sequence = timeseries[-lookback:]
+model.eval()
+predicted = []
+current_sequence = last_sequence.clone()
+with torch.no_grad():
+    for _ in range(lookback):
+        prediction = model(current_sequence)
+        predicted.append(prediction.item())
+        # Update the sequence by removing the first element and adding the prediction at the end
+        current_sequence = torch.cat((current_sequence[:, 1:, :], prediction.view(1, 1, 1)), dim=1)
+predicted = np.array(predicted).reshape(-1, 1)
 
+forecast_dates = pd.date_range(start=timeseries.index[-1] + pd.DateOffset(months=1), periods=24, freq='MS')
+forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': predicted.flatten()})
+print("12-Month Forecast for SPI:")
+print(forecast_df)
 # plot
 plt.plot(timeseries)
 plt.plot(train_plot, c='r')
 plt.plot(test_plot, c='g')
+plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
+
 plt.show()
