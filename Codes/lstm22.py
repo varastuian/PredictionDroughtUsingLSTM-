@@ -8,24 +8,15 @@ import torch.utils.data as data
 import os
 
 df = pd.read_csv('result/40708spi.txt', delimiter=' ')
-# df.info()
-df.head()
-df.shape
 timeseries = df[['spi1']].values.astype('float32')
-df[['spi1']].plot()
-plt.show()
+
 # train-test split for time series
 train_size = int(len(timeseries) * 0.67)
 test_size = len(timeseries) - train_size
 train, test = timeseries[:train_size], timeseries[train_size:]
 
 def create_dataset(dataset, lookback):
-    """Transform a time series into a prediction dataset
     
-    Args:
-        dataset: A numpy array of time series, first dimension is the time steps
-        lookback: Size of window for prediction
-    """
     X, y = [], []
     for i in range(len(dataset)-lookback):
         feature = dataset[i:i+lookback]
@@ -38,7 +29,7 @@ lookback = 24
 X_train, y_train = create_dataset(train, lookback=lookback)
 X_test, y_test = create_dataset(test, lookback=lookback)
 
-class AirModel(nn.Module):
+class lstmModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.lstm = nn.LSTM(input_size=1, hidden_size=50, num_layers=1, batch_first=True)
@@ -48,7 +39,7 @@ class AirModel(nn.Module):
         x = self.linear(x)
         return x
 
-model = AirModel()
+model = lstmModel()
 optimizer = optim.Adam(model.parameters())
 loss_fn = nn.MSELoss()
 loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=8)
@@ -69,7 +60,6 @@ else:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # print("Epoch %d" % epoch)
 
         # Validation
         if epoch % 100 != 0:
@@ -83,6 +73,8 @@ else:
         print("Epoch %d: train RMSE %.4f, test RMSE %.4f" % (epoch, train_rmse, test_rmse))
     torch.save(model.state_dict(), checkpoint_path)
     print("Model trained and saved.")
+
+
 with torch.no_grad():
     # shift train predictions for plotting
     train_plot = np.ones_like(timeseries) * np.nan
@@ -93,27 +85,19 @@ with torch.no_grad():
     test_plot = np.ones_like(timeseries) * np.nan
     test_plot[train_size+lookback:len(timeseries)] = model(X_test)[:, -1, :]
 
+# plot
+# plt.plot(timeseries)
+# plt.plot(train_plot, c='r')
+# plt.plot(test_plot, c='g')
 
-last_sequence = timeseries[-lookback:]
-model.eval()
-predicted = []
-current_sequence = last_sequence
-with torch.no_grad():
-    for _ in range(lookback):
-        prediction = model(current_sequence)
-        predicted.append(prediction.item())
-        # Update the sequence by removing the first element and adding the prediction at the end
-        current_sequence = torch.cat((current_sequence[:, 1:, :], prediction.view(1, 1, 1)), dim=1)
-predicted = np.array(predicted).reshape(-1, 1)
 
 forecast_dates = pd.date_range(start=timeseries.index[-1] + pd.DateOffset(months=1), periods=24, freq='MS')
-forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': predicted.flatten()})
-print("12-Month Forecast for SPI:")
+forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': test_plot.flatten()})
+print("24-Month Forecast for SPI:")
 print(forecast_df)
-# plot
-plt.plot(timeseries)
-plt.plot(train_plot, c='r')
-plt.plot(test_plot, c='g')
+
 plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
 
 plt.show()
+
+
