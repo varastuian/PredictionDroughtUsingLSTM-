@@ -24,7 +24,9 @@ def create_dataset(dataset, lookback):
     X, y = [], []
     for i in range(len(dataset) - lookback):
         X.append(dataset[i:i + lookback])
-        y.append(dataset[i + lookback])
+        # y.append(dataset[i + lookback])
+        y.append(dataset[i+1:i+lookback+1])
+
     X = np.array(X)
     y = np.array(y)
     # Reshape X to include the feature dimension (needed by LSTM: batch, seq, feature)

@@ -86,18 +86,18 @@ with torch.no_grad():
     test_plot[train_size+lookback:len(timeseries)] = model(X_test)[:, -1, :]
 
 # plot
-# plt.plot(timeseries)
-# plt.plot(train_plot, c='r')
-# plt.plot(test_plot, c='g')
+plt.plot(timeseries)
+plt.plot(train_plot, c='r')
+plt.plot(test_plot, c='g')
 
 
-forecast_dates = pd.date_range(start=timeseries.index[-1] + pd.DateOffset(months=1), periods=24, freq='MS')
-forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': test_plot.flatten()})
-print("24-Month Forecast for SPI:")
-print(forecast_df)
+# forecast_dates = pd.date_range(start=timeseries.index[-1] + pd.DateOffset(months=1), periods=24, freq='MS')
+# forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': test_plot.flatten()})
+# print("24-Month Forecast for SPI:")
+# print(forecast_df)
 
-plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
+# plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
 
-plt.show()
+# plt.show()
 
 
