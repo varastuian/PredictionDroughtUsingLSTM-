@@ -12,7 +12,7 @@ timeseries = df[['spi1']].values.astype('float32')
 
 # train-test split for time series
 train_size = int(len(timeseries) * 0.67)
-test_size = len(timeseries) - train_size
+# test_size = len(timeseries) - train_size
 train, test = timeseries[:train_size], timeseries[train_size:]
 
 def create_dataset(dataset, lookback):
@@ -44,7 +44,7 @@ optimizer = optim.Adam(model.parameters())
 loss_fn = nn.MSELoss()
 loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=8)
 
-checkpoint_path = 'lstm_model_checkpoint.pth'
+checkpoint_path = 'lstm_model_checkpoint22.pth'
 if os.path.exists(checkpoint_path):
     model.load_state_dict(torch.load(checkpoint_path))
     print("Loaded pre-trained model.")
@@ -77,18 +77,18 @@ else:
 
 with torch.no_grad():
     # shift train predictions for plotting
-    train_plot = np.ones_like(timeseries) * np.nan
-    y_pred = model(X_train)
-    y_pred = y_pred[:, -1, :]
-    train_plot[lookback:train_size] = model(X_train)[:, -1, :]
+    # train_plot = np.ones_like(timeseries) * np.nan
+    # y_pred = model(X_train)
+    # y_pred = y_pred[:, -1, :]
+    # train_plot[lookback:train_size] = model(X_train)[:, -1, :]
     # shift test predictions for plotting
-    test_plot = np.ones_like(timeseries) * np.nan
-    test_plot[train_size+lookback:len(timeseries)] = model(X_test)[:, -1, :]
+    # test_plot = np.ones_like(timeseries) * np.nan
+    test_plot = model(X_test)[:, -1, :]
 
 # plot
-plt.plot(timeseries)
-plt.plot(train_plot, c='r')
-plt.plot(test_plot, c='g')
+plt.plot(timeseries[train_size+lookback:len(timeseries)], marker='o')
+# plt.plot(train_plot, c='r')
+plt.plot(test_plot, c='g', marker='x', linestyle='--')
 
 
 # forecast_dates = pd.date_range(start=timeseries.index[-1] + pd.DateOffset(months=1), periods=24, freq='MS')
@@ -98,6 +98,6 @@ plt.plot(test_plot, c='g')
 
 # plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
 
-# plt.show()
+plt.show()
 
 

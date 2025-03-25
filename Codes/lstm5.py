@@ -10,12 +10,12 @@ from sklearn.preprocessing import MinMaxScaler
 
 df = pd.read_csv('result/40708spi.txt', delim_whitespace=True)
 # Parse the date column (format = mm/dd/yyyy )
-df['date'] = pd.to_datetime(df['date'], dayfirst=False)
+# df['date'] = pd.to_datetime(df['date'], dayfirst=False)
 
 timeseries = df['spi1'].values.astype('float32')
-dates = df['date'].values  
-scaler = MinMaxScaler(feature_range=(0, 1))
-timeseries = scaler.fit_transform(timeseries.reshape(-1, 1)).flatten()
+# dates = df['date'].values  
+# scaler = MinMaxScaler(feature_range=(0, 1))
+# timeseries = scaler.fit_transform(timeseries.reshape(-1, 1)).flatten()
 
 train_size = int(len(timeseries) * 0.67)
 train, test = timeseries[:train_size], timeseries[train_size:]
@@ -47,10 +47,10 @@ X_test, y_test = X_test.to(device), y_test.to(device)
 class LSTMModel(nn.Module):
     def __init__(self):
         super().__init__()
-        # self.lstm = nn.LSTM(input_size=1, hidden_size=50, num_layers=1, batch_first=True)
-        self.lstm = nn.LSTM(input_size=1, hidden_size=100, num_layers=2, batch_first=True, dropout=0.2)
+        self.lstm = nn.LSTM(input_size=1, hidden_size=50, num_layers=1, batch_first=True)
+        # self.lstm = nn.LSTM(input_size=1, hidden_size=100, num_layers=2, batch_first=True, dropout=0.2)
 
-        self.linear = nn.Linear(100, 1)
+        self.linear = nn.Linear(50, 1)
     def forward(self, x):
         # x: (batch, sequence, feature)
         x, _ = self.lstm(x)
@@ -65,14 +65,14 @@ optimizer = optim.RMSprop(model.parameters(), lr=0.005)
 loss_fn = nn.MSELoss()
 loader = data.DataLoader(data.TensorDataset(X_train, y_train), shuffle=True, batch_size=16)
 
-checkpoint_path = 'lstm_model_checkpoint5.pth'
+checkpoint_path = 'lstm_model_checkpoint55.pth'
 if os.path.exists(checkpoint_path):
     model.load_state_dict(torch.load(checkpoint_path))
     print("Loaded pre-trained model.")
 else:
     train_losses, test_losses = [], []
 
-    for epoch in range(2000):
+    for epoch in range(800):
         model.train()
         for X_batch, y_batch in loader:
             X_batch, y_batch = X_batch.to(device), y_batch.to(device)  # Move batch data to GPU
@@ -103,7 +103,7 @@ model.eval()
 with torch.no_grad():
     y_train_pred = model(X_train).detach().cpu().numpy().flatten()
     y_test_pred = model(X_test).detach().cpu().numpy().flatten()
-y_test_pred = scaler.inverse_transform(y_test_pred.reshape(-1, 1)).flatten()
+# y_test_pred = scaler.inverse_transform(y_test_pred.reshape(-1, 1)).flatten()
 
 train_plot = np.full((len(timeseries),), np.nan, dtype=np.float32)
 train_plot[lookback:train_size] = y_train_pred
@@ -115,12 +115,12 @@ test_plot[train_size+lookback:] = y_test_pred
 test_start_idx = train_size + lookback
 
 test_actual = timeseries[test_start_idx:]
-test_dates = dates[test_start_idx:]
-test_actual = scaler.inverse_transform(test_actual.reshape(-1, 1)).flatten()
+# test_dates = dates[test_start_idx:]
+# test_actual = scaler.inverse_transform(test_actual.reshape(-1, 1)).flatten()
 
 plt.figure(figsize=(12,6))
-plt.plot(test_dates, test_actual, label="Actual SPI (Test)", marker='o')
-plt.plot(test_dates, y_test_pred, label="Predicted SPI (Test)", marker='x', linestyle='--')
+plt.plot(test_actual, label="Actual SPI (Test)", marker='o')
+plt.plot(y_test_pred, label="Predicted SPI (Test)", marker='x', linestyle='--')
 plt.xlabel("Date")
 plt.ylabel("SPI")
 plt.title("Comparison of Actual vs. Predicted SPI (Test Data)")
