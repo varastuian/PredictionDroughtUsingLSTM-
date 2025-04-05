@@ -22,26 +22,24 @@ def wavelet_decompose(series,wavelet='db4',level=2):
     detail = pywt.upcoef('d', coeffs[1], wavelet, level=level, take=len(series))
     return approx, detail
 
-def create_dataset(series, lags,dates):
-    X, y, dates_y = [], [], []
-    max_lag = max(lags)
-    for i in range(max_lag, len(series)):
-        X.append([series[i - lag] for lag in lags])
-        y.append(series[i])
-        dates_y.append(dates[i])
-    return np.array(X), np.array(y), np.array(dates_y)
 
-def create_dataset_wavelet(approx_series, detail_series, lags,dates):
-    X, y, dates_y = [], [], []
-    max_lag = max(lags)
-    for i in range(max_lag, len(approx_series)):
-        feat_approx = [approx_series[i - lag] for lag in lags]
-        feat_detail = [detail_series[i - lag] for lag in lags]
+def create_dataset(data, seq_length):
+        xs, ys = [], []
+        for i in range(len(data) - seq_length - 1):
+            x = data[i:(i + seq_length)]
+            y = data[i + seq_length]
+            xs.append(x)
+            ys.append(y)
+        return np.array(xs), np.array(ys)
+
+def create_dataset_wavelet(approx_series, detail_series, seq_length):
+    X, y = [], []
+    for i in range(len(approx_series) - seq_length - 1):
+        feat_approx = approx_series[i:(i + seq_length)]
+        feat_detail = detail_series[i:(i + seq_length)]
         X.append(feat_approx + feat_detail)  # concatenate to get 2*len(lags) features
-        y.append([approx_series[i], detail_series[i]])
-        dates_y.append(dates[i])
-
-    return np.array(X, dtype='float32'), np.array(y, dtype='float32'), np.array(dates_y)
+        y.append([approx_series[i+ seq_length], detail_series[i+ seq_length]])
+    return np.array(X, dtype='float32'), np.array(y, dtype='float32')
 
 
 def rmse(y_true, y_pred):
@@ -140,6 +138,7 @@ for i, start_idx in enumerate(start_indices):
     # axes_wt[i].set_xlabel('Time index')
     # axes_wt[i].legend()
 
+    # processed_series = series
     processed_series = approx
 
     # 3. Lag Selection using ACF/PACF
@@ -163,7 +162,8 @@ for i, start_idx in enumerate(start_indices):
     # ax_acf_pacf[i,1].set_xlabel('Lag')
     # ax_acf_pacf[i,1].legend()
 
-    selected_lags = [lag for lag in range(1, lag_max+1) if np.abs(acf_vals[lag]) > 0.2]
+    # selected_lags = [lag for lag in range(1, lag_max+1) if np.abs(acf_vals[lag]) > 0.2]
+    selected_lags = 12
     print("Selected lags based on ACF:", selected_lags)
 
 
@@ -171,27 +171,27 @@ for i, start_idx in enumerate(start_indices):
     ######################################
 
     # Dataset for "approximation-based" methods:
-    X_all, y_all,test_date = create_dataset(processed_series, selected_lags,dates)
+    X_all, y_all = create_dataset(processed_series, selected_lags)
     train_size = int(len(X_all) * 0.82)
     X_train, X_test = X_all[:train_size], X_all[train_size:]
     y_train, y_test = y_all[:train_size], y_all[train_size:]
     # max_lag = max(selected_lags)
     # dates_all = dates[max_lag:]
-    dates_test = test_date[train_size:]
+    # dates_test = test_date[train_size:]
 
     # For LSTM-based models, reshape inputs to 3D: (samples, seq_length, features)
     X_train_lstm = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
     X_test_lstm = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
     # For wavelet-boosted methods, we create a dataset by concatenating features from approx and detail.
-    X_all_wave, y_all_wave,test_date_wave = create_dataset_wavelet(approx, detail, selected_lags,dates)
+    X_all_wave, y_all_wave = create_dataset_wavelet(approx, detail, selected_lags)
     X_train_wave, X_test_wave = X_all_wave[:train_size], X_all_wave[train_size:]
     y_train_wave, y_test_wave = y_all_wave[:train_size], y_all_wave[train_size:]
-    dates_test_wave = test_date_wave[train_size:]
+    # dates_test_wave = test_date_wave[train_size:]
 
     # For WBi-LSTM, reshape to (samples, seq_length, 2), where seq_length = len(selected_lags)
-    X_train_wave_lstm = X_train_wave.reshape((X_train_wave.shape[0], len(selected_lags), 2))
-    X_test_wave_lstm = X_test_wave.reshape((X_test_wave.shape[0], len(selected_lags), 2))
+    X_train_wave_lstm = X_train_wave.reshape((X_train_wave.shape[0], selected_lags, 1))
+    X_test_wave_lstm = X_test_wave.reshape((X_test_wave.shape[0], selected_lags, 1))
 
 
     # 6. Model 1: LSTM (Using approx dataset)
@@ -247,126 +247,126 @@ for i, start_idx in enumerate(start_indices):
     # # 8. Model 3: MLP (Using approx dataset)
     # ######################################
 
-    # X_train_mlp = torch.tensor(X_train, dtype=torch.float32)
-    # y_train_mlp = torch.tensor(y_train.reshape(-1,1), dtype=torch.float32)
-    # X_test_mlp = torch.tensor(X_test, dtype=torch.float32)
-    # y_test_mlp = torch.tensor(y_test.reshape(-1,1), dtype=torch.float32)
+    X_train_mlp = torch.tensor(X_train, dtype=torch.float32)
+    y_train_mlp = torch.tensor(y_train.reshape(-1,1), dtype=torch.float32)
+    X_test_mlp = torch.tensor(X_test, dtype=torch.float32)
+    y_test_mlp = torch.tensor(y_test.reshape(-1,1), dtype=torch.float32)
 
-    # mlp_model = MLPModel(input_dim=X_train.shape[1], hidden_dim=50)
-    # criterion_mlp = nn.MSELoss()
-    # optimizer_mlp = optim.Adam(mlp_model.parameters(), lr=0.001)
-    # n_epochs_mlp = 150
-    # mlp_model.train()
-    # for epoch in range(n_epochs_mlp):
-    #     optimizer_mlp.zero_grad()
-    #     output = mlp_model(X_train_mlp)
-    #     loss = criterion_mlp(output, y_train_mlp)
-    #     loss.backward()
-    #     optimizer_mlp.step()
-    #     if (epoch+1) % 50 == 0:
-    #         mlp_model.eval()
-    #         with torch.no_grad():
-    #             train_pred = mlp_model(X_train_mlp)
-    #             test_pred = mlp_model(X_test_mlp)
-    #             print(f"MLP Epoch {epoch+1}/{n_epochs_mlp} - Train RMSE: {rmse(y_train_mlp.numpy(), train_pred.numpy()):.4f}, Test RMSE: {rmse(y_test_mlp.numpy(), test_pred.numpy()):.4f}")
-    #         mlp_model.train()
-    # mlp_model.eval()
-    # with torch.no_grad():
-    #     mlp_pred = mlp_model(X_test_mlp).numpy().flatten()
-    # mlp_rmse = rmse(y_test, mlp_pred)
-    # mlp_nse = nse(y_test, mlp_pred)
-    # mlp_cc = correlation_coef(y_test, mlp_pred)
-    # print("\nMLP Performance:")
-    # print(f"RMSE: {mlp_rmse:.4f}, NSE: {mlp_nse:.4f}, CC: {mlp_cc:.4f}")
+    mlp_model = MLPModel(input_dim=X_train.shape[1], hidden_dim=50)
+    criterion_mlp = nn.MSELoss()
+    optimizer_mlp = optim.Adam(mlp_model.parameters(), lr=0.001)
+    n_epochs_mlp = 150
+    mlp_model.train()
+    for epoch in range(n_epochs_mlp):
+        optimizer_mlp.zero_grad()
+        output = mlp_model(X_train_mlp)
+        loss = criterion_mlp(output, y_train_mlp)
+        loss.backward()
+        optimizer_mlp.step()
+        if (epoch+1) % 50 == 0:
+            mlp_model.eval()
+            with torch.no_grad():
+                train_pred = mlp_model(X_train_mlp)
+                test_pred = mlp_model(X_test_mlp)
+                print(f"MLP Epoch {epoch+1}/{n_epochs_mlp} - Train RMSE: {rmse(y_train_mlp.numpy(), train_pred.numpy()):.4f}, Test RMSE: {rmse(y_test_mlp.numpy(), test_pred.numpy()):.4f}")
+            mlp_model.train()
+    mlp_model.eval()
+    with torch.no_grad():
+        mlp_pred = mlp_model(X_test_mlp).numpy().flatten()
+    mlp_rmse = rmse(y_test, mlp_pred)
+    mlp_nse = nse(y_test, mlp_pred)
+    mlp_cc = correlation_coef(y_test, mlp_pred)
+    print("\nMLP Performance:")
+    print(f"RMSE: {mlp_rmse:.4f}, NSE: {mlp_nse:.4f}, CC: {mlp_cc:.4f}")
+
+    ######################################
+    # 9. Model 4: EDT (ExtraTrees) (Using approx dataset)
+    ######################################
+    edt_model = ExtraTreesRegressor(n_estimators=100, random_state=42)
+    edt_model.fit(X_train, y_train)
+    edt_pred = edt_model.predict(X_test)
+    edt_rmse = rmse(y_test, edt_pred)
+    edt_nse = nse(y_test, edt_pred)
+    edt_cc = correlation_coef(y_test, edt_pred)
+    print("\nEDT (ExtraTrees) Performance:")
+    print(f"RMSE: {edt_rmse:.4f}, NSE: {edt_nse:.4f}, CC: {edt_cc:.4f}")
+
+    ######################################
+    # 10. Model 5: Random Forest (Using approx dataset)
+    ######################################
+    rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf_model.fit(X_train, y_train)
+    rf_pred = rf_model.predict(X_test)
+    rf_rmse = rmse(y_test, rf_pred)
+    rf_nse = nse(y_test, rf_pred)
+    rf_cc = correlation_coef(y_test, rf_pred)
+    print("\nRandom Forest Performance:")
+    print(f"RMSE: {rf_rmse:.4f}, NSE: {rf_nse:.4f}, CC: {rf_cc:.4f}")
+
+    ######################################
+    # 11. Model 6: Bootstrapped Random Forest (BRF)
+    ######################################
+    n_boot = 30
+    brf_preds = np.zeros_like(y_test, dtype=float)
+    for i in range(n_boot):
+        idx = np.random.choice(len(X_train), size=len(X_train), replace=True)
+        X_boot = X_train[idx]
+        y_boot = y_train[idx]
+        brf_model = RandomForestRegressor(n_estimators=100, random_state=42 + i)
+        brf_model.fit(X_boot, y_boot)
+        brf_preds += brf_model.predict(X_test)
+    brf_pred = brf_preds / n_boot
+    brf_rmse = rmse(y_test, brf_pred)
+    brf_nse = nse(y_test, brf_pred)
+    brf_cc = correlation_coef(y_test, brf_pred)
+    print("\nBootstrapped Random Forest (BRF) Performance:")
+    print(f"RMSE: {brf_rmse:.4f}, NSE: {brf_nse:.4f}, CC: {brf_cc:.4f}")
+
+    ######################################
+    # 12. Model 7: Bi-directional LSTM (Bi-LSTM) (Using approx dataset)
+    ######################################
+
+    X_train_tensor_bi = torch.tensor(X_train_lstm, dtype=torch.float32)
+    X_test_tensor_bi = torch.tensor(X_test_lstm, dtype=torch.float32)
+    bi_lstm_model = BiLSTMModel(input_size=1, hidden_size=50, num_layers=1)
+    criterion_bi = nn.MSELoss()
+    optimizer_bi = optim.Adam(bi_lstm_model.parameters(), lr=0.001)
+    n_epochs_bi = 150
+    bi_lstm_model.train()
+    for epoch in range(n_epochs_bi):
+        # for X_batch, y_batch in train_loader:
+        optimizer_bi.zero_grad()
+        output = bi_lstm_model(X_train_tensor_bi)
+        loss = criterion_bi(output, y_train_tensor)
+        loss.backward()
+        optimizer_bi.step()
+        if (epoch+1) % 10 == 0:
+            bi_lstm_model.eval()
+            with torch.no_grad():
+                train_pred = bi_lstm_model(X_train_tensor_bi)
+                test_pred = bi_lstm_model(X_test_tensor_bi)
+                print(f"Bi-LSTM Epoch {epoch+1}/{n_epochs_bi} - Train RMSE: {rmse(y_train_tensor.numpy(), train_pred.numpy()):.4f}, Test RMSE: {rmse(y_test_tensor.numpy(), test_pred.numpy()):.4f}")
+            bi_lstm_model.train()
+    bi_lstm_model.eval()
+    with torch.no_grad():
+        bilstm_pred = bi_lstm_model(X_test_tensor_bi).numpy().flatten()
+    bilstm_rmse = rmse(y_test, bilstm_pred)
+    bilstm_nse = nse(y_test, bilstm_pred)
+    bilstm_cc = correlation_coef(y_test, bilstm_pred)
+    print("\nBi-LSTM Performance:")
+    print(f"RMSE: {bilstm_rmse:.4f}, NSE: {bilstm_nse:.4f}, CC: {bilstm_cc:.4f}")
 
     # ######################################
-    # # 9. Model 4: EDT (ExtraTrees) (Using approx dataset)
+    # # 13. Model 8: Wavelet-Boosted Random Forest (WBRF)
     # ######################################
-    # edt_model = ExtraTreesRegressor(n_estimators=100, random_state=42)
-    # edt_model.fit(X_train, y_train)
-    # edt_pred = edt_model.predict(X_test)
-    # edt_rmse = rmse(y_test, edt_pred)
-    # edt_nse = nse(y_test, edt_pred)
-    # edt_cc = correlation_coef(y_test, edt_pred)
-    # print("\nEDT (ExtraTrees) Performance:")
-    # print(f"RMSE: {edt_rmse:.4f}, NSE: {edt_nse:.4f}, CC: {edt_cc:.4f}")
-
-    # ######################################
-    # # 10. Model 5: Random Forest (Using approx dataset)
-    # ######################################
-    # rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
-    # rf_model.fit(X_train, y_train)
-    # rf_pred = rf_model.predict(X_test)
-    # rf_rmse = rmse(y_test, rf_pred)
-    # rf_nse = nse(y_test, rf_pred)
-    # rf_cc = correlation_coef(y_test, rf_pred)
-    # print("\nRandom Forest Performance:")
-    # print(f"RMSE: {rf_rmse:.4f}, NSE: {rf_nse:.4f}, CC: {rf_cc:.4f}")
-
-    # ######################################
-    # # 11. Model 6: Bootstrapped Random Forest (BRF)
-    # ######################################
-    # n_boot = 30
-    # brf_preds = np.zeros_like(y_test, dtype=float)
-    # for i in range(n_boot):
-    #     idx = np.random.choice(len(X_train), size=len(X_train), replace=True)
-    #     X_boot = X_train[idx]
-    #     y_boot = y_train[idx]
-    #     brf_model = RandomForestRegressor(n_estimators=100, random_state=42 + i)
-    #     brf_model.fit(X_boot, y_boot)
-    #     brf_preds += brf_model.predict(X_test)
-    # brf_pred = brf_preds / n_boot
-    # brf_rmse = rmse(y_test, brf_pred)
-    # brf_nse = nse(y_test, brf_pred)
-    # brf_cc = correlation_coef(y_test, brf_pred)
-    # print("\nBootstrapped Random Forest (BRF) Performance:")
-    # print(f"RMSE: {brf_rmse:.4f}, NSE: {brf_nse:.4f}, CC: {brf_cc:.4f}")
-
-    # ######################################
-    # # 12. Model 7: Bi-directional LSTM (Bi-LSTM) (Using approx dataset)
-    # ######################################
-
-    # X_train_tensor_bi = torch.tensor(X_train_lstm, dtype=torch.float32)
-    # X_test_tensor_bi = torch.tensor(X_test_lstm, dtype=torch.float32)
-    # bi_lstm_model = BiLSTMModel(input_size=1, hidden_size=50, num_layers=1)
-    # criterion_bi = nn.MSELoss()
-    # optimizer_bi = optim.Adam(bi_lstm_model.parameters(), lr=0.001)
-    # n_epochs_bi = 150
-    # bi_lstm_model.train()
-    # for epoch in range(n_epochs_bi):
-    #     # for X_batch, y_batch in train_loader:
-    #     optimizer_bi.zero_grad()
-    #     output = bi_lstm_model(X_train_tensor_bi)
-    #     loss = criterion_bi(output, y_train_tensor)
-    #     loss.backward()
-    #     optimizer_bi.step()
-    #     if (epoch+1) % 10 == 0:
-    #         bi_lstm_model.eval()
-    #         with torch.no_grad():
-    #             train_pred = bi_lstm_model(X_train_tensor_bi)
-    #             test_pred = bi_lstm_model(X_test_tensor_bi)
-    #             print(f"Bi-LSTM Epoch {epoch+1}/{n_epochs_bi} - Train RMSE: {rmse(y_train_tensor.numpy(), train_pred.numpy()):.4f}, Test RMSE: {rmse(y_test_tensor.numpy(), test_pred.numpy()):.4f}")
-    #         bi_lstm_model.train()
-    # bi_lstm_model.eval()
-    # with torch.no_grad():
-    #     bilstm_pred = bi_lstm_model(X_test_tensor_bi).numpy().flatten()
-    # bilstm_rmse = rmse(y_test, bilstm_pred)
-    # bilstm_nse = nse(y_test, bilstm_pred)
-    # bilstm_cc = correlation_coef(y_test, bilstm_pred)
-    # print("\nBi-LSTM Performance:")
-    # print(f"RMSE: {bilstm_rmse:.4f}, NSE: {bilstm_nse:.4f}, CC: {bilstm_cc:.4f}")
-
-    # # ######################################
-    # # # 13. Model 8: Wavelet-Boosted Random Forest (WBRF)
-    # # ######################################
-    # wbrf_model = RandomForestRegressor(n_estimators=100, random_state=42)
-    # wbrf_model.fit(X_train_wave, y_train_wave)
-    # wbrf_pred = wbrf_model.predict(X_test_wave)
-    # wbrf_rmse = rmse(y_test_wave, wbrf_pred)
-    # wbrf_nse = nse(y_test_wave, wbrf_pred)
-    # wbrf_cc = correlation_coef(y_test_wave, wbrf_pred)
-    # print("\nWavelet-Boosted Random Forest (WBRF) Performance:")
-    # print(f"RMSE: {wbrf_rmse:.4f}, NSE: {wbrf_nse:.4f}, CC: {wbrf_cc[0]:.4f}")
+    wbrf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    wbrf_model.fit(X_train_wave, y_train_wave)
+    wbrf_pred = wbrf_model.predict(X_test_wave)
+    wbrf_rmse = rmse(y_test_wave, wbrf_pred)
+    wbrf_nse = nse(y_test_wave, wbrf_pred)
+    wbrf_cc = correlation_coef(y_test_wave, wbrf_pred)
+    print("\nWavelet-Boosted Random Forest (WBRF) Performance:")
+    print(f"RMSE: {wbrf_rmse:.4f}, NSE: {wbrf_nse:.4f}, CC: {wbrf_cc[0]:.4f}")
 
     # # ######################################
     # # # 14. Model 9: Wavelet-Boosted Bi-LSTM (WBi-LSTM)
@@ -441,45 +441,6 @@ for i, start_idx in enumerate(start_indices):
     #     print(f"{model_name}: RMSE = {metrics['RMSE']:.4f}, NSE = {metrics['NSE']:.4f}, CC = {metrics['CC']:.4f}")
 
     ######################################
-    # 16. Plot Test Predictions for All Methods (approx. 1-year test period)
-    ######################################
-    # plt.figure(figsize=(14,12))
-    # plot_order = ['LSTM','SVR','MLP','EDT','RF','BRF','Bi-LSTM','WBRF','WBi-LSTM']
-    # for i, model_name in enumerate(plot_order):
-    #     if model_name in ['WBRF','WBi-LSTM']:
-    #         if model_name=='WBRF':
-    #             pred = wbrf_pred
-    #         else:
-    #             pred = wbilstm_pred
-    #         true_vals = y_test_wave
-    #     else:
-    #         if model_name=='LSTM':
-    #             pred = lstm_pred
-    #         elif model_name=='SVR':
-    #             pred = svr_pred
-    #         elif model_name=='MLP':
-    #             pred = mlp_pred
-    #         elif model_name=='EDT':
-    #             pred = edt_pred
-    #         elif model_name=='RF':
-    #             pred = rf_pred
-    #         elif model_name=='BRF':
-    #             pred = brf_pred
-    #         elif model_name=='Bi-LSTM':
-    #             pred = bilstm_pred
-    #         true_vals = y_test
-    #     plt.subplot(5,2,i+1)
-    #     plt.plot(true_vals, label='actual spi')
-    #     plt.plot(pred, label=f'predicted by {model_name}')
-    #     # , marker='x', linestyle='--')
-    #     # plt.title(f'spi{num}_{model_name}', fontsize=10)
-    #     # plt.xlabel('Test Index')
-    #     plt.ylabel(f'spi{num}_{model_name}', fontsize=10)
-    #     plt.legend(fontsize=8)
-    # plt.tight_layout()
-    # plt.show()
-
-    ######################################
     # 17. Taylor Diagram for Model Comparison
     ######################################
     # Use the approx-based predictions for models not wavelet-boosted.
@@ -516,11 +477,11 @@ for i, start_idx in enumerate(start_indices):
     ######################################
     # 19. Forecasting Function for All Models and Plotting
     ######################################
-    n_forecast = 24  
+    n_forecast = 50  
 
     def forecast_non_wavelet(model_name):
         # Use the processed_series (approximation) as the base.
-        current_input = processed_series[-len(selected_lags):].tolist()  # length = max(selected_lags)
+        current_input = processed_series[-selected_lags:].tolist()  # length = max(selected_lags)
         forecast = []
         for i in range(n_forecast):
             X_input = np.array(current_input, dtype='float32')
@@ -562,8 +523,8 @@ for i, start_idx in enumerate(start_indices):
 
     def forecast_wavelet(model_name):
         # For wavelet-boosted models, maintain two lists: current_approx and current_detail.
-        current_approx = approx[-len(selected_lags):].tolist()  # length = len(selected_lags)
-        current_detail = detail[-len(selected_lags):].tolist()  # length = len(selected_lags)
+        current_approx = approx[-selected_lags:].tolist()  # length = len(selected_lags)
+        current_detail = detail[-selected_lags:].tolist()  # length = len(selected_lags)
         forecast = []  # we forecast the approx component
         for i in range(n_forecast):
             # Build input: shape (1, len(selected_lags), 2)
@@ -595,10 +556,10 @@ for i, start_idx in enumerate(start_indices):
     model_forecast_funcs = {
         'LSTM': forecast_non_wavelet,
         'SVR': forecast_non_wavelet,
-        # 'MLP': forecast_non_wavelet,
-        # 'EDT': forecast_non_wavelet,
-        # 'RF': forecast_non_wavelet,
-        # 'BRF': forecast_non_wavelet,
+        'MLP': forecast_non_wavelet,
+        'EDT': forecast_non_wavelet,
+        'RF': forecast_non_wavelet,
+        'BRF': forecast_non_wavelet,
         # 'Bi-LSTM': forecast_non_wavelet,
         # 'WBRF': forecast_wavelet,
         # 'WBi-LSTM': forecast_wavelet
@@ -608,10 +569,10 @@ for i, start_idx in enumerate(start_indices):
     model_test_preds = {
         'LSTM': lstm_pred,
         'SVR': svr_pred,
-        # 'MLP': mlp_pred,
-        # 'EDT': edt_pred,
-        # 'RF': rf_pred,
-        # 'BRF': brf_pred,
+        'MLP': mlp_pred,
+        'EDT': edt_pred,
+        'RF': rf_pred,
+        'BRF': brf_pred,
         # 'Bi-LSTM': bilstm_pred,
         # 'WBRF': wbrf_pred,       # These are for approx; y_test_wave holds two columns
         # 'WBi-LSTM': wbilstm_pred  # We'll use the approx component (first column)
@@ -620,10 +581,10 @@ for i, start_idx in enumerate(start_indices):
     model_true_tests = {
         'LSTM': y_test,
         'SVR': y_test,
-        # 'MLP': y_test,
-        # 'EDT': y_test,
-        # 'RF': y_test,
-        # 'BRF': y_test,
+        'MLP': y_test,
+        'EDT': y_test,
+        'RF': y_test,
+        'BRF': y_test,
         # 'Bi-LSTM': y_test,
         # 'WBRF': y_test_wave[:,0],       # approx component
         # 'WBi-LSTM': y_test_wave[:,0]      # approx component
@@ -637,7 +598,7 @@ for i, start_idx in enumerate(start_indices):
     # Plotting: We'll plot one figure per model.
     fig19=plt.figure(figsize=(14, 18))
     # model_list = ['LSTM','SVR','MLP','EDT','RF','BRF','Bi-LSTM','WBRF','WBi-LSTM']
-    model_list = ['LSTM','SVR']
+    model_list = ['LSTM','SVR','MLP','EDT','RF','BRF']
     for i, model_name in enumerate(model_list):
         fig19.add_subplot(5,2,i+1)
         if model_name in ['WBRF','WBi-LSTM']:
@@ -657,7 +618,8 @@ for i, start_idx in enumerate(start_indices):
         else:
             true_test = model_true_tests[model_name]
         # plt.plot( dates_test,test_pred, label='Test Pred')
-        plt.plot(range(train_size, train_size+len(test_pred)), test_pred, label='Test Pred')
+        plt.plot(range(train_size+selected_lags, train_size+selected_lags+len(test_pred)), test_pred, label='Test Pred')
+        # plt.plot(range(len(base_series), len(base_series) + len(test_pred)), test_pred, label='Test Pred')
 
 
         
@@ -665,7 +627,7 @@ for i, start_idx in enumerate(start_indices):
 
         forecast = forecasts[model_name]
         # plt.plot(forecast_dates,forecast, label=f'forcast _ {model_name}')
-        plt.plot(range(train_size+len(test_pred) , train_size+len(test_pred) + n_forecast),forecast, label=f'forcast _ {model_name}')
+        plt.plot(range(train_size+selected_lags+len(test_pred) , train_size+selected_lags+len(test_pred) + n_forecast),forecast, label=f'forcast _ {model_name}')
         plt.ylabel('SPI')
         plt.legend(fontsize=8)
     fig19.suptitle(f'forcast spi_{num}')

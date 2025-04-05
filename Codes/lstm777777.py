@@ -18,12 +18,12 @@ from scipy.stats import pearsonr
 df = pd.read_csv('result/40708spi.txt', delimiter=' ')
 df['date'] = pd.to_datetime(df['date'],dayfirst=False)  # Assuming there's a 'date' column
 
-series_spi1 = df['spi1'].values.astype('float32')
-series_spi3 = df['spi3'].values.astype('float32')
-series_spi6 = df['spi6'].values.astype('float32')
-series_spi9 = df['spi9'].values.astype('float32')
-series_spi12 = df['spi12'].values.astype('float32')
-series_spi24 = df['spi24'].values.astype('float32')
+series = df['spi1'].values.astype('float32')
+# series_spi3 = df['spi3'].values.astype('float32')
+# series_spi6 = df['spi6'].values.astype('float32')
+# series_spi9 = df['spi9'].values.astype('float32')
+# series_spi12 = df['spi12'].values.astype('float32')
+# series_spi24 = df['spi24'].values.astype('float32')
 
 plt.figure(figsize=(10,4))
 plt.plot(series, marker='o', markersize=3)
@@ -73,7 +73,6 @@ plt.title('PACF')
 plt.xlabel('Lag')
 plt.tight_layout()
 plt.show()
-exit()
 # Select lags where |ACF| > 0.2
 selected_lags = [lag for lag in range(1, lag_max+1) if np.abs(acf_vals[lag]) > 0.1]
 print("Selected lags based on ACF:", selected_lags)
