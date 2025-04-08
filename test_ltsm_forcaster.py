@@ -1,7 +1,4 @@
 import pandas as pd
-import numpy as np
-import pickle
-import seaborn as sns
 import matplotlib.pyplot as plt
 from scalecast.Forecaster import Forecaster
 
@@ -34,13 +31,24 @@ f.set_test_length(12)
 # Generate future dates for forecasting
 f.generate_future_dates(12) # Forecast for 12 more months
 
+
+# Add multiple models
+f.set_estimator('prophet')
+f.manual_forecast()
+
+f.set_estimator('arima')
+f.manual_forecast(order=(2,1,2))  # or use auto_arima=True for tuning
+
+f.set_estimator('lightgbm')
+f.manual_forecast(
+    lags=12,  # use 12 lagged values
+    alpha=0.05,  # confidence interval
+    verbose=False,
+)
+
 # Set the LSTM estimator
 f.set_estimator('lstm')
 
-
-# Fit the LSTM model to the training data
-# f.fit()
-# f.auto_forecast()
 f.manual_forecast(
     lags=36,
     batch_size=32,
@@ -53,13 +61,13 @@ f.manual_forecast(
     dropout=(0,)*3,
 )
 
-
+f.tune()
 # Predict the future values
 # f.predict()
-
+f.auto_forecast(call_me='auto')
 # Plot the actual vs predicted values
-f.plot_test_set()
-
+# f.plot_test_set()
+f.plot()
 # Plot the future forecast
 # f.plot_forecast()
 
