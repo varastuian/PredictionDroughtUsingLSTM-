@@ -60,9 +60,9 @@ spi_df.rename(columns={'spi': 'y'}, inplace=True)
 # ============================
 # --- Save DataFrames (if needed)
 # ============================
-df.to_csv("main_data.csv", index=False)
-monthly_precip.to_csv("monthly_precipitation.csv", index=False)
-spi_df.to_csv("spi_data.csv", index=False)
+# df.to_csv("main_data.csv", index=False)
+# monthly_precip.to_csv("monthly_precipitation.csv", index=False)
+# spi_df.to_csv("spi_data.csv", index=False)
 
 # ============================
 # --- Step 4: Prepare data for LSTM ---
@@ -83,7 +83,7 @@ def create_sequences(data, window_size):
     return torch.tensor(np.array(X), dtype=torch.float32), torch.tensor(np.array(y), dtype=torch.float32)
 
 # Choose a window size that is appropriate (e.g., 24 months)
-window_size = 24
+window_size = 12
 X_all, y_all = create_sequences(spi_scaled, window_size)
 
 # Use a continuous portion for scheduled sampling multi‐step training:
@@ -193,31 +193,31 @@ for epoch in range(150):
     if epoch % 10 == 0:
         print(f"One-step Training Epoch {epoch}, Loss: {loss.item():.4f}")
 
-model.eval()
-with torch.no_grad():
-    y_pred = model(X_test)
-y_pred_inv = scaler.inverse_transform(y_pred.numpy())
-y_test_inv = scaler.inverse_transform(y_test.numpy())
+# model.eval()
+# with torch.no_grad():
+#     y_pred = model(X_test)
+# y_pred_inv = scaler.inverse_transform(y_pred.numpy())
+# y_test_inv = scaler.inverse_transform(y_test.numpy())
 
-# Plot actual vs one-step predictions:
-date_series = pd.to_datetime(station_data['ds'].dropna().reset_index(drop=True))
-forecast_start_index = len(date_series) - len(y_test_inv)
-forecast_dates = date_series[forecast_start_index:]
+# # Plot actual vs one-step predictions:
+# date_series = pd.to_datetime(station_data['ds'].dropna().reset_index(drop=True))
+# forecast_start_index = len(date_series) - len(y_test_inv)
+# forecast_dates = date_series[forecast_start_index:]
 
-plt.figure(figsize=(10, 5))
-plt.plot(forecast_dates, y_test_inv, label="Actual SPI (Next 12 months)")
-plt.plot(forecast_dates, y_pred_inv, label="Predicted SPI (LSTM one-step)")
-plt.title("SPI Forecast with PyTorch LSTM (One-step)")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-plt.show()
+# plt.figure(figsize=(10, 5))
+# plt.plot(forecast_dates, y_test_inv, label="Actual SPI (Next 12 months)")
+# plt.plot(forecast_dates, y_pred_inv, label="Predicted SPI (LSTM one-step)")
+# plt.title("SPI Forecast with PyTorch LSTM (One-step)")
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.show()
 
 # =======================================
 # --- Step 8: Forecast Next 10 Years with Recursive Forecasting ---
 # =======================================
 # Here we use the trained model to forecast future values recursively. We start from the last window in the data.
-future_steps = 160  # forecast horizon (months)
+future_steps = 312 # forecast horizon (months)
 last_sequence = spi_scaled[-window_size:]
 current_seq = torch.tensor(last_sequence.reshape(1, window_size, 1), dtype=torch.float32)
 
@@ -254,5 +254,7 @@ plt.tight_layout()
 plt.show()
 
 # Evaluate one-step predictions error for reference
-mse = mean_squared_error(y_test_inv, y_pred_inv)
-print(f"One-step Forecast MSE: {mse:.4f}")
+# mse = mean_squared_error(y_test_inv, y_pred_inv)
+# print(f"One-step Forecast MSE: {mse:.4f}")
+import time
+plt.savefig(f"forcast{int(time.time())}")
