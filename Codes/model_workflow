@@ -1,0 +1,34 @@
+// Time Series Model Evaluation Pipeline
+digraph {
+	rankdir=LR size=40
+	A [label="Load SPI Dataset"]
+	B [label="For each station & SPI
+- Drop NA
+- Create TimeSeries"]
+	C [label="Train/Validation Split
++ Scale"]
+	D [label="Loop over Models
+ExtraTF, RandomRF, SVR, LSTM, WBBLSTM"]
+	D1 [label="Wavelet Decompose
+(only WBBLSTM)" shape=box]
+	E [label="Train Model
+(if not exists)"]
+	F [label="Forecast on Validation
++ Inverse Scale"]
+	G [label="Compute Metrics:
+RMSE, MAE, Corr, SM
+*Correct scale!*"]
+	H [label="Save Model & Metrics"]
+	I [label="Select Best Model
+Based on Corr or RMSE"]
+	A -> B
+	B -> C
+	C -> D
+	D -> E
+	D -> D1 [label=WBBLSTM constraint=false]
+	D1 -> E [label="Approximation only"]
+	E -> F
+	F -> G
+	G -> H
+	H -> I
+}

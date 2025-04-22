@@ -1,0 +1,39 @@
+// Time Series Model Evaluation Pipeline
+digraph {
+	rankdir=LR size=40
+	A [label="Load Raw Data
+(precipitation)" shape=cylinder]
+	A1 [label="Compute SPI
+(Gamma Fit)" shape=parallelogram]
+	B [label="For each station:
+Drop NA + TimeSeries" shape=box]
+	C [label="Split Train/Validation
++ Scale Data" shape=box]
+	D [label="Loop Models:
+ExtraTF, RF, SVR, LSTM, WB-LSTM" shape=box3d]
+	D1 [label="Wavelet Decompose
+(WBBLSTM only)" shape=parallelogram]
+	E [label="Train Model
+(if not saved)" shape=box]
+	F [label="Forecast Validation
++ Inverse Scale" shape=box]
+	G [label="Metrics:
+RMSE, MAE, Corr, SMAPE" shape=parallelogram]
+	H [label="Save Model
++ Metrics" shape=cylinder]
+	I [label="Select Best Model
+(Corr or RMSE)" shape=diamond]
+	A -> A1
+	A1 -> B
+	B -> C
+	C -> D
+	D -> E [label="Standard Models"]
+	D -> D1 [label="WBBLSTM only" constraint=false style=dashed]
+	D1 -> E [label="Use Approximation"]
+	E -> F
+	F -> G
+	G -> H
+	H -> I
+	D -> E [weight=10]
+	D1 -> E [weight=1]
+}
