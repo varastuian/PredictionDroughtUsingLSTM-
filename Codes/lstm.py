@@ -26,20 +26,14 @@ def load_data(csv_path):
         "station_id": "station"
     }, inplace=True)
     df.set_index("date", inplace=True)
-    # spi_dfs = {}
-    # for col in ["spi1", "spi3", "spi6", "spi9", "spi12", "spi24"]:
-    #     if col in df.columns:
-    #         sub_df = df[["rainfall", col, "station"]].dropna()
-    #         sub_df = sub_df.rename(columns={col: "spi"})
-    #         spi_dfs[col] = sub_df
 
     return df
 
 
 def remove_seasonality(series):
-    # Remove monthly seasonality via decomposition
     decomposition = seasonal_decompose(series, model='additive', period=12, extrapolate_trend='freq')
-    return series - decomposition.seasonal
+    deseasonalized = series - decomposition.seasonal
+    return deseasonalized, decomposition.seasonal
 
 
 def make_features(df, timescale, lags=12):
@@ -48,8 +42,13 @@ def make_features(df, timescale, lags=12):
     data = data.rename(columns={f"spi{timescale}": "spi"})
     data.dropna(inplace=True)
 
+
+
     # remove seasonality
-    data['spi_deseason'] = remove_seasonality(data['spi'])
+    # data['spi_deseason'] = remove_seasonality(data['spi'])
+    data['spi_deseason'], seasonal = remove_seasonality(data['spi'])
+    data['seasonal'] = seasonal
+
     # lag features
     for lag in range(1, lags+1):
         data[f'spi_lag_{lag}'] = data['spi_deseason'].shift(lag)
@@ -122,6 +121,29 @@ def forecast(model, X, model_type):
         return model.predict(X3).flatten()
     else:
         return model.predict(X)
+    
+
+def plot_all_model_predictions_with_spi(y_val_deseason, all_preds_deseason, seasonal_vals, station, timescale):
+    # Reconstruct true full SPI
+    y_val_spi = y_val_deseason + seasonal_vals
+
+    # Reconstruct predicted full SPI for each model
+    plt.figure(figsize=(12, 6))
+    plt.plot(y_val_spi.index, y_val_spi, label='Actual SPI', linewidth=2, color='black')
+
+    for model_name, y_pred_deseason in all_preds_deseason.items():
+        y_pred_spi = y_pred_deseason + seasonal_vals
+        plt.plot(y_val_spi.index, y_pred_spi, linestyle='--', label=model_name)
+
+    plt.title(f'All Models - Predicted vs Actual SPI\nStation {station}, SPI{timescale}')
+    plt.xlabel('Date')
+    plt.ylabel('SPI')
+    plt.legend()
+    plt.grid(True)
+    os.makedirs('plots', exist_ok=True)
+    plt.savefig(f'plots/all_models_pred_vs_actual_spi_{station}_spi{timescale}.png')
+    plt.close()
+
 
 def plot_all_model_predictions(y_true, all_preds, all_metrics, station, timescale):
     plt.figure(figsize=(12, 6))
@@ -143,17 +165,6 @@ def plot_all_model_predictions(y_true, all_preds, all_metrics, station, timescal
     plt.close()
 
 
-def plot_predictions(y_true, y_pred, station, timescale, model_name):
-    plt.figure(figsize=(10, 5))
-    plt.plot(y_true.index, y_true, label='Validation SPI')
-    plt.plot(y_true.index, y_pred, label='Predicted SPI', linestyle='--')
-    plt.title(f'{model_name} Prediction vs Validation - Station {station}, SPI{timescale}')
-    plt.xlabel('Date')
-    plt.ylabel('SPI')
-    plt.legend()
-    os.makedirs('plots', exist_ok=True)
-    plt.savefig(f'plots/prediction_{station}_spi{timescale}_{model_name}.png')
-    plt.close()
 
 
 def run_pipeline(csv_path):
@@ -164,13 +175,43 @@ def run_pipeline(csv_path):
     for st in [40700]:
         df_st = df[df['station'] == st].copy()
         for ts in [6]:
+            
+
+
             data = make_features(df_st, ts)
             # train-test split (80/20)
             split = int(len(data)*0.8)
+
+            train_data = data.iloc[:split]
+            val_data = data.iloc[split:]
+
+            plt.figure(figsize=(12, 6))
+
+            # Plot training SPI
+            plt.plot(train_data.index, train_data['spi'], label='Training SPI', color='blue')
+
+            # Plot validation SPI
+            plt.plot(val_data.index, val_data['spi'], label='Validation SPI', color='orange')
+
+            # Optional: vertical line at split
+            plt.axvline(val_data.index[0], color='gray', linestyle='--', label='Train/Val Split')
+
+            plt.title(f'SPI{ts} Time Series (Train vs Validation)')
+            plt.xlabel('Date')
+            plt.ylabel('SPI')
+            plt.legend()
+            plt.grid(True)
+            os.makedirs('plots', exist_ok=True)
+            plt.savefig(f'plots/spi{ts}_train_val_split_station_{st}.png')
+            plt.close()
+
+
             X = data.drop(columns=['spi', 'rainfall'])
             y = data['spi_deseason']
             X_train, X_val = X.iloc[:split], X.iloc[split:]
             y_train, y_val = y.iloc[:split], y.iloc[split:]
+
+            
 
             models = train_models(X_train, y_train)
             # evaluate all
@@ -190,10 +231,15 @@ def run_pipeline(csv_path):
             fcast = forecast(models[best], next_X, best)[0]
             results[-1]['forecast'] = fcast
 
+            seasonal_vals = data['seasonal'].iloc[split:]  # seasonal component for validation period
+            # plot_predicted_vs_actual_spi(y_val, preds[best], seasonal_vals, st, ts, best)
+            plot_all_model_predictions_with_spi(y_val, preds, seasonal_vals, st, ts)
+
+
             # plot prediction vs validation
             plot_all_model_predictions(y_val, preds, metrics, st, ts)
 
-            plot_predictions(y_val, preds[best], st, ts, best)
+            # plot_predictions(y_val, preds[best], st, ts, best)
 
     return pd.DataFrame(results)
 
