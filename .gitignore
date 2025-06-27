@@ -3,3 +3,6 @@ Codes/all_results2/*
 Codes/all_results3/*
 Codes/results
 Codes/darts_logs
+plots
+Codes/__pycache__
+checkpoints

@@ -1,139 +1,205 @@
 import pandas as pd
 import numpy as np
-import torch
-from scipy.stats import gamma, norm
-from darts.models import RNNModel
-from darts.metrics import smape
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from scipy.stats import pearsonr
-from darts.dataprocessing.transformers.scaler import Scaler
-from darts import TimeSeries
+from pathlib import Path
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from statsmodels.tsa.seasonal import seasonal_decompose
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+import pywt
 import matplotlib.pyplot as plt
-
-# Set random seed for reproducibility
-SEED = 42
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+import os
 
 
-# ----- Helper Functions -----
-def fit_gamma(precip: pd.Series) -> tuple:
-    non_zero = precip[precip > 0]
-    if len(non_zero) == 0:
-        return np.nan, np.nan, 1.0
-    shape, _, scale = gamma.fit(non_zero, floc=0)
-    zero_prob = (precip == 0).mean()
-    return shape, scale, zero_prob
+def load_data(csv_path):
+    df = pd.read_csv(csv_path, parse_dates=["ds"])
+    df.rename(columns={
+        "ds": "date",
+        "precip": "rainfall",
+        "SPI_1": "spi1",
+        "SPI_3": "spi3",
+        "SPI_6": "spi6",
+        "SPI_9": "spi9",
+        "SPI_12": "spi12",
+        "SPI_24": "spi24",
+        "station_id": "station"
+    }, inplace=True)
+    df.set_index("date", inplace=True)
+    # spi_dfs = {}
+    # for col in ["spi1", "spi3", "spi6", "spi9", "spi12", "spi24"]:
+    #     if col in df.columns:
+    #         sub_df = df[["rainfall", col, "station"]].dropna()
+    #         sub_df = sub_df.rename(columns={col: "spi"})
+    #         spi_dfs[col] = sub_df
 
-def compute_spi(roll: pd.Series, shape: float, scale: float, zero_prob: float) -> np.ndarray:
-    probs = np.where(
-        roll.isna(),
-        np.nan,
-        zero_prob + (1 - zero_prob) * gamma.cdf(roll, shape, scale=scale)
-    )
-    probs = np.clip(probs, 1e-10, 1 - 1e-10)
-    return norm.ppf(probs)
-
-def process_station(df_station: pd.DataFrame) -> pd.DataFrame:
-    df_station = df_station.sort_values('ds').reset_index(drop=True)
-    result = {'ds': df_station['ds']}
-    for s in [1, 3, 6, 9, 12, 24]:
-        roll = df_station['precip'].rolling(s, min_periods=s).sum()
-        shape, scale, zero_prob = fit_gamma(roll.dropna())
-        spi = compute_spi(roll, shape, scale, zero_prob)
-        mean, std = np.nanmean(spi), np.nanstd(spi)
-        result[f'SPI_{s}'] = (spi - mean) / std
-    result_df = pd.DataFrame(result)
-    result_df['station_id'] = df_station['station_id'].iloc[0]
-    return result_df
+    return df
 
 
-# ----- Load & Process Data -----
-df = (
-    pd.read_csv('main_data.csv', parse_dates=['data'])
-    .assign(ds=lambda d: d['data'].dt.to_period('M').dt.to_timestamp())
-    .groupby(['station_id', 'ds'])['rrr24']
-    .sum()
-    .reset_index(name='precip')
-)
-
-spi_list = [process_station(g) for _, g in df.groupby('station_id')]
-all_spi = pd.concat(spi_list, ignore_index=True)
-station_id = 40708
-target_col = 'SPI_6'
-horizon = 2
-future_horizon = 360
-window_size = 12
-num_epochs = 200
-
-df_station = all_spi[all_spi['station_id'] == station_id][['ds', target_col]].dropna()
-series = TimeSeries.from_dataframe(df_station, time_col='ds', value_cols=target_col)
+def remove_seasonality(series):
+    # Remove monthly seasonality via decomposition
+    decomposition = seasonal_decompose(series, model='additive', period=12, extrapolate_trend='freq')
+    return series - decomposition.seasonal
 
 
-scaler = Scaler()
-series_scaled = scaler.fit_transform(series)
+def make_features(df, timescale, lags=12):
+    # Use SPI timescale and rainfall as covariates
+    data = df[[f"spi{timescale}", "rainfall"]].copy()
+    data = data.rename(columns={f"spi{timescale}": "spi"})
+    data.dropna(inplace=True)
 
-# ----- Step 1: Evaluation -----
-train, val = series_scaled[:-horizon], series_scaled[-horizon:]
-
-model = RNNModel(
-    model='LSTM',
-    input_chunk_length=window_size,
-    output_chunk_length=horizon,
-    hidden_dim=60,
-    n_rnn_layers=5,
-    dropout=0.05,
-    batch_size=16,
-    n_epochs=num_epochs,
-    optimizer_kwargs={'lr': 1e-3},
-    random_state=SEED
-)
+    # remove seasonality
+    data['spi_deseason'] = remove_seasonality(data['spi'])
+    # lag features
+    for lag in range(1, lags+1):
+        data[f'spi_lag_{lag}'] = data['spi_deseason'].shift(lag)
+    data.dropna(inplace=True)
+    return data
 
 
-model.fit(train, verbose=True)
-forecast = model.predict(horizon)
+def train_models(X_train, y_train):
+    models = {
+        'ExtraTrees': ExtraTreesRegressor(n_estimators=100, random_state=0),
+        'RandomForest': RandomForestRegressor(n_estimators=100, random_state=0),
+        'SVR': SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    }
 
-# Inverse transform
-forecast = scaler.inverse_transform(forecast)
-val_actual = scaler.inverse_transform(val)
+    # Fit tree-based and SVR
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        models[name] = model
 
-# Evaluation
-y_true = val_actual.values().flatten()
-y_pred = forecast.values().flatten()
+    # Prepare data for LSTM (3D)
+    def build_lstm(X, y):
+        X3 = X.values.reshape(X.shape[0], 1, X.shape[1])
+        model = Sequential([
+            LSTM(64, input_shape=(X3.shape[1], X3.shape[2]), return_sequences=False),
+            Dropout(0.2),
+            Dense(1)
+        ])
+        model.compile(optimizer='adam', loss='mse')
+        model.fit(X3, y, epochs=50, batch_size=32, verbose=0)
+        return model
 
-rmse_val = np.sqrt(mean_squared_error(y_true, y_pred))
-mae_val = mean_absolute_error(y_true, y_pred)
-r2_val = r2_score(y_true, y_pred)
-corr_val, _ = pearsonr(y_true, y_pred)
-smape_val = smape(val_actual, forecast)
+    models['LSTM'] = build_lstm(X_train, y_train)
 
-print("Evaluation Metrics:")
-print(f"RMSE:  {rmse_val:.3f}")
-print(f"MAE:   {mae_val:.3f}")
-print(f"R²:    {r2_val:.3f}")
-print(f"Corr:  {corr_val:.3f}")
-print(f"SMAPE: {smape_val:.2f}%")
+    # Wavelet-based LSTM (decompose then LSTM)
+    def build_wblstm(X, y):
+        # Discrete Wavelet Transform on each feature column
+        coeffs = [pywt.wavedec(X.iloc[:, i], 'db1', level=2) for i in range(X.shape[1])]
+        # Use approximation coefficients at level 2
+        arrs = [c[0] for c in coeffs]
+        X_wav = np.vstack(arrs).T
+        X3 = X_wav.reshape(X_wav.shape[0], 1, X_wav.shape[1])
+        model = Sequential([
+            LSTM(64, input_shape=(1, X_wav.shape[1])),
+            Dropout(0.2),
+            Dense(1)
+        ])
+        y = y[-X3.shape[0]:]
 
-# Plot predictions
-series[-horizon:].plot(label='Actual')
-forecast.plot(label='Forecast', lw=2)
-plt.title(f"SPI_6 Forecast Evaluation - Station {station_id}")
-plt.legend()
-plt.show()
+        model.compile(optimizer='adam', loss='mse')
+        model.fit(X3, y, epochs=50, batch_size=32, verbose=0)
+        return model
 
-# ----- Step 2: Retrain on full series -----
-model.fit(series_scaled, verbose=True)
-future_forecast = model.predict(future_horizon)
-future_forecast = scaler.inverse_transform(future_forecast)
+    models['WB-LSTM'] = build_wblstm(X_train, y_train)
 
-# Plot future forecast
-series.plot(label='Historical')
-future_forecast.plot(label=f'Forecast (Next {future_horizon} Months)', lw=2)
-plt.title(f"SPI_6 Forecast - {future_horizon} Months Ahead for Station {station_id}")
-plt.legend()
-plt.show()
+    return models
 
-# Optional: save forecast to CSV
-# future_forecast.pd_dataframe().to_csv(f"SPI6_forecast_station_{station_id}.csv")
+
+def evaluate(model, X, y, model_type):
+    if model_type in ['LSTM', 'WB-LSTM']:
+        X3 = X.values.reshape(X.shape[0], 1, X.shape[1])
+        y_pred = model.predict(X3).flatten()
+    else:
+        y_pred = model.predict(X)
+    return mean_squared_error(y, y_pred), mean_absolute_error(y, y_pred), y_pred
+
+
+def forecast(model, X, model_type):
+    if model_type in ['LSTM', 'WB-LSTM']:
+        X3 = X.values.reshape(X.shape[0], 1, X.shape[1])
+        return model.predict(X3).flatten()
+    else:
+        return model.predict(X)
+
+def plot_all_model_predictions(y_true, all_preds, all_metrics, station, timescale):
+    plt.figure(figsize=(12, 6))
+    
+    # Plot ground truth
+    plt.plot(y_true.index, y_true, label='Validation SPI', linewidth=2, color='black')
+
+    # Plot each model's prediction
+    for model_name, y_pred in all_preds.items():
+        plt.plot(y_true.index, y_pred, linestyle='--', label=f'{model_name} (RMSE={all_metrics[model_name]["rmse"]:.2f})')
+
+    plt.title(f'Model Comparison - Station {station}, SPI{timescale}')
+    plt.xlabel('Date')
+    plt.ylabel('SPI')
+    plt.legend()
+    plt.grid(True)
+    os.makedirs('plots', exist_ok=True)
+    plt.savefig(f'plots/all_predictions_{station}_spi{timescale}.png')
+    plt.close()
+
+
+def plot_predictions(y_true, y_pred, station, timescale, model_name):
+    plt.figure(figsize=(10, 5))
+    plt.plot(y_true.index, y_true, label='Validation SPI')
+    plt.plot(y_true.index, y_pred, label='Predicted SPI', linestyle='--')
+    plt.title(f'{model_name} Prediction vs Validation - Station {station}, SPI{timescale}')
+    plt.xlabel('Date')
+    plt.ylabel('SPI')
+    plt.legend()
+    os.makedirs('plots', exist_ok=True)
+    plt.savefig(f'plots/prediction_{station}_spi{timescale}_{model_name}.png')
+    plt.close()
+
+
+def run_pipeline(csv_path):
+    df = load_data(csv_path)
+    stations = df['station'].unique()
+    results = []
+
+    for st in [40700]:
+        df_st = df[df['station'] == st].copy()
+        for ts in [6]:
+            data = make_features(df_st, ts)
+            # train-test split (80/20)
+            split = int(len(data)*0.8)
+            X = data.drop(columns=['spi', 'rainfall'])
+            y = data['spi_deseason']
+            X_train, X_val = X.iloc[:split], X.iloc[split:]
+            y_train, y_val = y.iloc[:split], y.iloc[split:]
+
+            models = train_models(X_train, y_train)
+            # evaluate all
+            metrics = {}
+            preds = {}
+            for name, model in models.items():
+                rmse, mae, y_pred = evaluate(model, X_val, y_val, name)
+                metrics[name] = {'rmse': rmse, 'mae': mae}
+                preds[name] = y_pred
+
+            # select best by rmse
+            best = min(metrics, key=lambda m: metrics[m]['rmse'])
+            results.append({'station': st, 'timescale': ts, 'best_model': best, 'metrics': metrics[best]})
+
+            # forecast next (last available row)
+            next_X = X.iloc[[-1]]
+            fcast = forecast(models[best], next_X, best)[0]
+            results[-1]['forecast'] = fcast
+
+            # plot prediction vs validation
+            plot_all_model_predictions(y_val, preds, metrics, st, ts)
+
+            plot_predictions(y_val, preds[best], st, ts, best)
+
+    return pd.DataFrame(results)
+
+
+if __name__ == '__main__':
+    csv_path = Path('codes/finaldata.csv')
+    _ = run_pipeline(csv_path)
+    # summary.to_csv('drought_forecast_results.csv', index=False)
+    print("Pipeline complete.")
