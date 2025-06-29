@@ -1,0 +1,2 @@
+station,timescale,best_model,metrics,forecast
+40700,6,ExtraTrees,"{'rmse': 0.0004954836572267679, 'mae': 0.011365939632475217}",-0.2743674921985453

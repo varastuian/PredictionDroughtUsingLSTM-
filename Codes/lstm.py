@@ -1,225 +1,251 @@
-import torch
-import torch.nn as nn
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
-from torch.utils.data import DataLoader, Dataset
 import numpy as np
+from pathlib import Path
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
+from sklearn.svm import SVR
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from statsmodels.tsa.seasonal import seasonal_decompose
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+import pywt
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import os
 
 
-def load_data(file_path, column='spi1', date_format='%m/%d/%Y', delimiter=' ',):
+def load_data(csv_path):
+    df = pd.read_csv(csv_path, parse_dates=["ds"])
+    df.rename(columns={
+        "ds": "date",
+        "precip": "rainfall",
+        "SPI_1": "spi1",
+        "SPI_3": "spi3",
+        "SPI_6": "spi6",
+        "SPI_9": "spi9",
+        "SPI_12": "spi12",
+        "SPI_24": "spi24",
+        "station_id": "station"
+    }, inplace=True)
+    df.set_index("date", inplace=True)
 
-    data = pd.read_csv(file_path, delimiter=delimiter)
-    data['date'] = pd.to_datetime(data['date'], format=date_format)
-    data.set_index('date', inplace=True)
-    data[column].replace(-99, np.nan, inplace=True)
-    data[column].fillna(method='ffill', inplace=True)
+    return df
 
+
+def remove_seasonality(series):
+    decomposition = seasonal_decompose(series, model='additive', period=12, extrapolate_trend='freq')
+    deseasonalized = series - decomposition.seasonal
+    return deseasonalized, decomposition.seasonal
+
+
+def make_features(df, timescale, lags=12):
+    # Use SPI timescale and rainfall as covariates
+    data = df[[f"spi{timescale}", "rainfall"]].copy()
+    data = data.rename(columns={f"spi{timescale}": "spi"})
+    data.dropna(inplace=True)
+
+
+
+    # remove seasonality
+    # data['spi_deseason'] = remove_seasonality(data['spi'])
+    data['spi_deseason'], seasonal = remove_seasonality(data['spi'])
+    data['seasonal'] = seasonal
+
+    # lag features
+    for lag in range(1, lags+1):
+        data[f'spi_lag_{lag}'] = data['spi_deseason'].shift(lag)
+    data.dropna(inplace=True)
     return data
 
-def create_dataset(dataset, look_back=12):
-    """
-    Create sequences of data for LSTM training.
-    """
-    X, y = [], []
-    for i in range(len(dataset) - look_back):
-        X.append(dataset[i:i+look_back, 0])
-        y.append(dataset[i+look_back, 0])
-    return np.array(X), np.array(y)
 
-# ---------------- Custom Dataset Class ----------------
+def train_models(X_train, y_train):
+    models = {
+        'ExtraTrees': ExtraTreesRegressor(n_estimators=100, random_state=0),
+        'RandomForest': RandomForestRegressor(n_estimators=100, random_state=0),
+        'SVR': SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    }
 
-class SPIDataset(Dataset):
-    def __init__(self, X, y):
-        self.X = X
-        self.y = y
-    
-    def __len__(self):
-        return len(self.X)
-    
-    def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+    # Fit tree-based and SVR
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+        models[name] = model
 
-# ---------------- LSTM Model Definition ----------------
+    # Prepare data for LSTM (3D)
+    def build_lstm(X, y):
+        X3 = X.values.reshape(X.shape[0], 1, X.shape[1])
+        model = Sequential([
+            LSTM(64, input_shape=(X3.shape[1], X3.shape[2]), return_sequences=False),
+            Dropout(0.2),
+            Dense(1)
+        ])
+        model.compile(optimizer='adam', loss='mse')
+        model.fit(X3, y, epochs=50, batch_size=32, verbose=0)
+        return model
 
-class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=64, num_layers=2, output_size=1):
-        super(LSTMModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, output_size)
-    
-    def forward(self, x):
-        # Initialize hidden state and cell state with zeros
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        out, _ = self.lstm(x, (h0, c0))
-        # Get output from the last time step
-        out = self.fc(out[:, -1, :])
-        return out
+    models['LSTM'] = build_lstm(X_train, y_train)
 
-# ---------------- Training Function ----------------
+    # Wavelet-based LSTM (decompose then LSTM)
+    def build_wblstm(X, y):
+        # Discrete Wavelet Transform on each feature column
+        coeffs = [pywt.wavedec(X.iloc[:, i], 'db1', level=2) for i in range(X.shape[1])]
+        # Use approximation coefficients at level 2
+        arrs = [c[0] for c in coeffs]
+        X_wav = np.vstack(arrs).T
+        X3 = X_wav.reshape(X_wav.shape[0], 1, X_wav.shape[1])
+        model = Sequential([
+            LSTM(64, input_shape=(1, X_wav.shape[1])),
+            Dropout(0.2),
+            Dense(1)
+        ])
+        y = y[-X3.shape[0]:]
 
-def train_model(model, dataloader, criterion, optimizer, num_epochs, device):
-    model.train()
-    losses = []
-    for epoch in range(num_epochs):
-        epoch_loss = 0.0
-        for inputs, targets in dataloader:
-            inputs = inputs.to(device)
-            targets = targets.to(device)
-            outputs = model(inputs)
-            loss = criterion(outputs, targets.unsqueeze(1))
-            
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        avg_loss = epoch_loss / len(dataloader)
-        losses.append(avg_loss)
-        if (epoch+1) % 10 == 0:
-            print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}')
-    return losses
+        model.compile(optimizer='adam', loss='mse')
+        model.fit(X3, y, epochs=50, batch_size=32, verbose=0)
+        return model
 
-# ---------------- Forecasting Function ----------------
+    models['WB-LSTM'] = build_wblstm(X_train, y_train)
 
-def forecast_future(model, last_sequence, scaler, forecast_steps=12, device='cpu'):
-    """
-    Iteratively predict future values.
-    - last_sequence: the last available input sequence (scaled)
-    - forecast_steps: how many steps (months) to forecast
-    """
-    model.eval()
-    predicted = []
-    current_sequence = last_sequence.clone().to(device)
-    with torch.no_grad():
-        for _ in range(forecast_steps):
-            prediction = model(current_sequence)
-            predicted.append(prediction.item())
-            # Update the sequence by removing the first element and adding the prediction at the end
-            current_sequence = torch.cat((current_sequence[:, 1:, :], prediction.view(1, 1, 1)), dim=1)
-    predicted = np.array(predicted).reshape(-1, 1)
-    predicted = scaler.inverse_transform(predicted)
-    return predicted
-
-# ---------------- Main Routine ----------------
-
-def main():
-
-    look_back = 12  # Use past 12 months to predict the next value
-
-    # Load and preprocess data
-    data = load_data('result/40708spi.txt', column='spi1')
-    spi_series = data['spi1']
-    start_date = "1990-01-01"
-    end_date = "1996-01-01"
-    spi_series = spi_series.loc[start_date:end_date]
-    spi_series.plot(title="SPI-1", figsize=(10, 5), marker='o')
-    
-    spi_values = spi_series.values.reshape(-1, 1)
+    return models
 
 
-
-    # Scale the data
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(spi_values)
-
-
-    # ---------------- Train-Test Split ----------------
-    # Use 80% of the data for training and the remaining for testing.
-    train_size = int(len(scaled_data) * 0.8)
-    train_data = scaled_data[:train_size]
-    # For the test set, include an overlap of look_back to properly form sequences.
-    # test_data = scaled_data[train_size - look_back:]
-    test_data = scaled_data[train_size :]
-
-    # Create datasets for training and testing
-    X_train, y_train = create_dataset(train_data, look_back)
-    X_test, y_test = create_dataset(test_data, look_back)
-
-    # Convert arrays to tensors
-    X_train_tensor = torch.from_numpy(X_train).float().unsqueeze(2)  # (samples, look_back, 1)
-    y_train_tensor = torch.from_numpy(y_train).float()
-    X_test_tensor = torch.from_numpy(X_test).float().unsqueeze(2)
-    y_test_tensor = torch.from_numpy(y_test).float()
-
-    # Create Dataset and DataLoader for training
-    train_dataset = SPIDataset(X_train_tensor, y_train_tensor)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-
-
-    # Set device and initialize model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using {device} device")
-    model = LSTMModel(input_size=1, hidden_size=64, num_layers=2, output_size=1).to(device)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    num_epochs = 100
-
-    # Check if a pre-trained model checkpoint exists; if not, train the model
-    checkpoint_path = 'lstm_model_checkpoint2.pth'
-    if os.path.exists(checkpoint_path):
-        model.load_state_dict(torch.load(checkpoint_path))
-        print("Loaded pre-trained model.")
+def evaluate(model, X, y, model_type):
+    if model_type in ['LSTM', 'WB-LSTM']:
+        X3 = X.values.reshape(X.shape[0], 1, X.shape[1])
+        y_pred = model.predict(X3).flatten()
     else:
-        print("Training model...")
-        train_model(model, train_loader, criterion, optimizer, num_epochs, device)
-        torch.save(model.state_dict(), checkpoint_path)
-        print("Model trained and saved.")
-
-# ---------------- Validate on Test Set ----------------
-    # We'll perform one-step predictions for each test sequence.
-    model.eval()
-    predictions = []
-    with torch.no_grad():
-        for i in range(len(X_test_tensor)):
-            input_seq = X_test_tensor[i].unsqueeze(0).to(device)  # shape: (1, look_back, 1)
-            pred = model(input_seq)
-            predictions.append(pred.item())
-
-    predictions = np.array(predictions).reshape(-1, 1)
-    predictions_inv = scaler.inverse_transform(predictions)
-    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
+        y_pred = model.predict(X)
+    return mean_squared_error(y, y_pred), mean_absolute_error(y, y_pred), y_pred
 
 
-    # ---------------- One-Step Forecast ----------------
-    last_sequence = scaled_data[-look_back:]
-    # last_sequence_tensor = torch.from_numpy(last_sequence).float().unsqueeze(0).unsqueeze(2).to(device)
-    last_sequence_tensor = torch.from_numpy(last_sequence).float().unsqueeze(0).to(device)  # Shape: (1, look_back, 1)
+def forecast(model, X, model_type):
+    if model_type in ['LSTM', 'WB-LSTM']:
+        X3 = X.values.reshape(X.shape[0], 1, X.shape[1])
+        return model.predict(X3).flatten()
+    else:
+        return model.predict(X)
+    
 
-    model.eval()
-    with torch.no_grad():
-        forecast = model(last_sequence_tensor)
-    forecast_value = scaler.inverse_transform(forecast.cpu().numpy())
-    print("Forecasted SPI for next month:", forecast_value[0][0])
+def plot_all_model_predictions_with_spi(y_val_deseason, all_preds_deseason, seasonal_vals, station, timescale):
+    # Reconstruct true full SPI
+    y_val_spi = y_val_deseason + seasonal_vals
 
-    # ---------------- Multi-Step Forecast (Next 12 Months) ----------------
-    predicted_spi = forecast_future(model, last_sequence_tensor, scaler, forecast_steps=12, device=device)
-    forecast_dates = pd.date_range(start=spi_series.index[-1] + pd.DateOffset(months=1), periods=12, freq='MS')
-    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Predicted_SPI': predicted_spi.flatten()})
-    print("12-Month Forecast for SPI:")
-    print(forecast_df)
-
-    # ---------------- Plotting ----------------
-
-    test_dates = spi_series.index[train_size:][:len(y_test)]
-
+    # Reconstruct predicted full SPI for each model
     plt.figure(figsize=(12, 6))
-    plt.plot(spi_series.index, spi_series.values, label='Historical SPI')
-    plt.plot(forecast_df['Date'], forecast_df['Predicted_SPI'], marker='o', label='Forecast')
+    plt.plot(y_val_spi.index, y_val_spi, label='Actual SPI', linewidth=2, color='black')
+
+    for model_name, y_pred_deseason in all_preds_deseason.items():
+        y_pred_spi = y_pred_deseason + seasonal_vals
+        plt.plot(y_val_spi.index, y_pred_spi, linestyle='--', label=model_name)
+
+    plt.title(f'All Models - Predicted vs Actual SPI\nStation {station}, SPI{timescale}')
     plt.xlabel('Date')
-    plt.ylabel('SPI Value')
-    plt.title('SPI Forecast using LSTM')
+    plt.ylabel('SPI')
     plt.legend()
     plt.grid(True)
-    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=1))
-    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.show()
+    os.makedirs('plots', exist_ok=True)
+    plt.savefig(f'plots/all_models_pred_vs_actual_spi_{station}_spi{timescale}.png')
+    plt.close()
+
+
+def plot_all_model_predictions(y_true, all_preds, all_metrics, station, timescale):
+    plt.figure(figsize=(12, 6))
+    
+    # Plot ground truth
+    plt.plot(y_true.index, y_true, label='Validation SPI', linewidth=2, color='black')
+
+    # Plot each model's prediction
+    for model_name, y_pred in all_preds.items():
+        plt.plot(y_true.index, y_pred, linestyle='--', label=f'{model_name} (RMSE={all_metrics[model_name]["rmse"]:.2f})')
+
+    plt.title(f'Model Comparison - Station {station}, SPI{timescale}')
+    plt.xlabel('Date')
+    plt.ylabel('SPI')
+    plt.legend()
+    plt.grid(True)
+    os.makedirs('plots', exist_ok=True)
+    plt.savefig(f'plots/all_predictions_{station}_spi{timescale}.png')
+    plt.close()
+
+
+
+
+def run_pipeline(csv_path):
+    df = load_data(csv_path)
+    stations = df['station'].unique()
+    results = []
+
+    for st in [40700]:
+        df_st = df[df['station'] == st].copy()
+        for ts in [6]:
+            
+
+
+            data = make_features(df_st, ts)
+            # train-test split (80/20)
+            split = int(len(data)*0.8)
+
+            train_data = data.iloc[:split]
+            val_data = data.iloc[split:]
+
+            plt.figure(figsize=(12, 6))
+
+            # Plot training SPI
+            plt.plot(train_data.index, train_data['spi'], label='Training SPI', color='blue')
+
+            # Plot validation SPI
+            plt.plot(val_data.index, val_data['spi'], label='Validation SPI', color='orange')
+
+            # Optional: vertical line at split
+            plt.axvline(val_data.index[0], color='gray', linestyle='--', label='Train/Val Split')
+
+            plt.title(f'SPI{ts} Time Series (Train vs Validation)')
+            plt.xlabel('Date')
+            plt.ylabel('SPI')
+            plt.legend()
+            plt.grid(True)
+            os.makedirs('plots', exist_ok=True)
+            plt.savefig(f'plots/spi{ts}_train_val_split_station_{st}.png')
+            plt.close()
+
+
+            X = data.drop(columns=['spi', 'rainfall'])
+            y = data['spi_deseason']
+            X_train, X_val = X.iloc[:split], X.iloc[split:]
+            y_train, y_val = y.iloc[:split], y.iloc[split:]
+
+            
+
+            models = train_models(X_train, y_train)
+            # evaluate all
+            metrics = {}
+            preds = {}
+            for name, model in models.items():
+                rmse, mae, y_pred = evaluate(model, X_val, y_val, name)
+                metrics[name] = {'rmse': rmse, 'mae': mae}
+                preds[name] = y_pred
+
+            # select best by rmse
+            best = min(metrics, key=lambda m: metrics[m]['rmse'])
+            results.append({'station': st, 'timescale': ts, 'best_model': best, 'metrics': metrics[best]})
+
+            # forecast next (last available row)
+            next_X = X.iloc[[-1]]
+            fcast = forecast(models[best], next_X, best)[0]
+            results[-1]['forecast'] = fcast
+
+            seasonal_vals = data['seasonal'].iloc[split:]  # seasonal component for validation period
+            # plot_predicted_vs_actual_spi(y_val, preds[best], seasonal_vals, st, ts, best)
+            plot_all_model_predictions_with_spi(y_val, preds, seasonal_vals, st, ts)
+
+
+            # plot prediction vs validation
+            plot_all_model_predictions(y_val, preds, metrics, st, ts)
+
+            # plot_predictions(y_val, preds[best], st, ts, best)
+
+    return pd.DataFrame(results)
+
 
 if __name__ == '__main__':
-    main()
+    csv_path = Path('codes/finaldata.csv')
+    _ = run_pipeline(csv_path)
+    # summary.to_csv('drought_forecast_results.csv', index=False)
+    print("Pipeline complete.")
