@@ -1,0 +1,1 @@
+{"wavelet": "db1", "level": 2, "lstm_kwargs": {"input_chunk_length": 24, "output_chunk_length": 1, "hidden_dim": 64, "n_rnn_layers": 1, "dropout": 0.1, "batch_size": 16, "n_epochs": 150, "optimizer_kwargs": {"lr": 0.001}, "random_state": 42}}
