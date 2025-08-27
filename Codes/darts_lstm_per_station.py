@@ -16,7 +16,7 @@ SEED = 42
 window_size = 36
 num_epochs = 300
 horizon = 12
-station_file = r"C:\Users\varas\Documents\Mine\Codes\PredictionDroughtUsingLSTM-\Data\python_spi\40700_SPI.csv"
+station_file = r"Data\python_spi\40700_SPI.csv"
 spi_column = 'SPI_12'
 
 # -----------------------------
@@ -70,17 +70,7 @@ model.fit(train, verbose=True)
 # Predict on test
 # -----------------------------
 pred = model.predict(len(test))
-# pred = model.predict(n=len(test), series=train)
-# pred = model.historical_forecasts(
-#     series,
-#     start=train.end_time(),   # start forecasting at end of train
-#     forecast_horizon=1,
-#     stride=1,
-#     retrain=False,
-#     verbose=True
-# )
-# Drop NaNs for metrics
-# o, p = test.values().flatten(), pred.values().flatten()
+
 o = scaler.inverse_transform(np.array(test.values().flatten()).reshape(-1,1)).flatten()
 p = scaler.inverse_transform(np.array(pred.values().flatten()).reshape(-1,1)).flatten()
 
@@ -111,6 +101,7 @@ plt.show()
 # -----------------------------
 # Forecast till 2099
 # -----------------------------
+#TODO : fit again on full timeseries instead of just train part
 last_date = df['ds'].max()
 months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
 
