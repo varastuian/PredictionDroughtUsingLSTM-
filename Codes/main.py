@@ -39,7 +39,12 @@ def forecast(df, spi_column, station_name, model_name):
 
     for i, spi_column in enumerate(spi_columns):
         df_spi = df[["ds", spi_column]].dropna().reset_index(drop=True)
-
+        print(f"Running {model_name} on {spi_column}")
+        print("#"*50)
+        print("#"*50)
+        print("#"*50)
+        print("#"*50)
+        print("#"*50)
         # -----------------------------
         # Decide if we need scaling
         # -----------------------------
@@ -49,13 +54,6 @@ def forecast(df, spi_column, station_name, model_name):
             scaler = StandardScaler()
 
             df_spi[spi_column + "_scaled"] = scaler.fit_transform(df_spi[[spi_column]])
-            print('after : ',df_spi.head())
-            print(df_spi[spi_column].mean())    
-            print(df_spi[spi_column].std())     
-            print(df_spi[spi_column + "_scaled"].mean())      # should be ~0
-            print(df_spi[spi_column + "_scaled"].std())       # should be ~1
-
-
             value_col = spi_column + "_scaled"
 
         else:
@@ -155,7 +153,7 @@ def forecast(df, spi_column, station_name, model_name):
 
         elif model_name == "WTLSTM":
             # Special: wavelet decomposition + multiple LSTMs
-            coeffs = pywt.wavedec(df[spi_column].values, "db4", level=1)
+            coeffs = pywt.wavedec(df_spi[value_col].values, "db4", level=1)
 
             # reconstruct each component back as aligned TimeSeries
             # components = []
@@ -169,22 +167,22 @@ def forecast(df, spi_column, station_name, model_name):
 
             
             # Thresholding to denoise (soft threshold on detail coefficients)
-            threshold = np.std(coeffs[-1]) * np.sqrt(2*np.log(len(df)))
+            threshold = np.std(coeffs[-1]) * np.sqrt(2*np.log(len(df_spi)))
             coeffs_denoised = [pywt.threshold(c, threshold, mode='soft') if i > 0 else c
                             for i, c in enumerate(coeffs)]
 
             # Reconstruct denoised signal
             denoised = pywt.waverec(coeffs_denoised, wavelet='db4')
-            df['spi_denoised'] = denoised[:len(df)]
+            df_spi['spi_denoised'] = denoised[:len(df_spi)]
 
-            # -----------------------------
-            # Scaling
-            # -----------------------------
-            scaler = StandardScaler()
-            df['spi_denoised_scaled'] = scaler.fit_transform(df[['spi_denoised']])
+            # # -----------------------------
+            # # Scaling
+            # # -----------------------------
+            # scaler = StandardScaler()
+            # df_spi['spi_denoised_scaled'] = scaler.fit_transform(df_spi[['spi_denoised']])
 
             # Create TimeSeries
-            series = TimeSeries.from_dataframe(df, 'ds', 'spi_denoised_scaled')
+            series = TimeSeries.from_dataframe(df_spi, 'ds', 'spi_denoised')
             train, test = series[:-48], series[-48:]
 
 
@@ -256,7 +254,7 @@ def forecast(df, spi_column, station_name, model_name):
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     # plt.legend(loc="upper right", fontsize=8)
     plt.savefig(
-        os.path.join(output_folder, f"{station_name}_{model_name}_subplot.png"),
+        os.path.join(output_folder, f"{station_name}_{model_name}.png"),
         dpi=300,
         bbox_inches="tight"
     )
@@ -274,13 +272,13 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station_name = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
     spi_columns = ["SPI_1","SPI_3","SPI_6","SPI_12"]
+    # spi_columns = ["SPI_3"]
     print("*"*50)
     print("*"*50)
     print("*"*50)
     print("*"*50)
     print("*"*50)
     for model_name in ["TFT", "NBEATS", "NHiTS", "TCN", "LSTM", "WTLSTM", "ExtraTrees", "RandomForest", "SVR"]:
-    # for model_name in ["SVR"]:
         print(f"Running {model_name} on {station_name}")
         print("_"*50)
         print("_"*50)
@@ -291,7 +289,10 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
         for result in results_list:
             result.update({"station": station_name, "model": model_name})
             all_results.append(result)
-
+        # Save results summary
+        pd.DataFrame(all_results).to_csv(
+            os.path.join(output_folder, "summary_metrics.csv"), index=False
+        )
 
 
 # Save results summary
