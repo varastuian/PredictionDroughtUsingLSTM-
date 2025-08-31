@@ -22,7 +22,7 @@ window_size = 12
 horizon = 1
 num_epochs = 350
 input_folder = "./Data/testdata"
-output_folder = "./Results/"
+output_folder = "./Results/r1"
 os.makedirs(output_folder, exist_ok=True)
 
 
