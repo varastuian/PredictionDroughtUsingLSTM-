@@ -17,8 +17,8 @@ SEED = 42
 window_size = 36
 num_epochs = 300
 horizon = 1
-station_file = r"Data\python_spi\40726_SPI.csv"
-spi_column = 'SPI_24'
+station_file = r"Data\python_spi\40710_SPI.csv"
+spi_column = 'SPI_3'
 
 # -----------------------------
 # Load SPI data
