@@ -39,9 +39,9 @@ def forecast(df, spi_column, station_name, model_name):
 
     for i, spi_column in enumerate(spi_columns):
         df_spi = df[["ds", spi_column]].dropna().reset_index(drop=True)
+        print("#"*50)
+        print("#"*50)
         print(f"Running {model_name} on {spi_column}")
-        print("#"*50)
-        print("#"*50)
         print("#"*50)
         print("#"*50)
         print("#"*50)
@@ -279,10 +279,10 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     print("*"*50)
     print("*"*50)
     for model_name in ["TFT", "NBEATS", "NHiTS", "TCN", "LSTM", "WTLSTM", "ExtraTrees", "RandomForest", "SVR"]:
+        print("_"*50)
+        print("_"*50)
+        print("_"*50)
         print(f"Running {model_name} on {station_name}")
-        print("_"*50)
-        print("_"*50)
-        print("_"*50)
         print("_"*50)
         print("_"*50)
         results_list = forecast(df.copy(), spi_columns, station_name, model_name)
