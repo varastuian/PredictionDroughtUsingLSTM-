@@ -223,44 +223,76 @@ def forecast(df, spi_column, station_name, model_name):
 
         rmse_val = rmse(test, pred)
         corr_val = pearsonr(o, p)[0]
+        std_ref = np.std(o, ddof=1)    # observed std
+        std_sim = np.std(p, ddof=1)    # model prediction std
+        crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2*std_ref*std_sim*corr_val)
 
-        # Forecast till 2099
-        last_date = df["ds"].max()
-        months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
-        forecast = model.predict(months_to_2099, series=series)
+        # # Forecast till 2099
+        # last_date = df["ds"].max()
+        # months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+        # forecast = model.predict(months_to_2099, series=series)
 
-        if use_scaler:
-            forecast_values = scaler.inverse_transform(forecast.values())
-        else:
-            forecast_values = forecast.values()
+        # if use_scaler:
+        #     forecast_values = scaler.inverse_transform(forecast.values())
+        # else:
+        #     forecast_values = forecast.values()
 
-        ax = axes[i]
-        ax.plot(df_spi["ds"], df_spi[spi_column], label="True", lw=0.7, alpha=0.6)
-        ax.plot(pred.time_index, p, label="Prediction", lw=1, color="red")
-        ax.plot(forecast.time_index, forecast_values, label="Forecast", lw=0.7, color="green", alpha=0.7)
-        ax.set_title(f"{spi_column}\nRMSE={rmse_val:.2f}, r={corr_val:.2f}", fontsize=10)
-        ax.grid(True)
-        ax.legend(loc="upper right", fontsize=8)  # Add legend to each subplot
+        # ax = axes[i]
+        # ax.plot(df_spi["ds"], df_spi[spi_column], label="True", lw=0.7, alpha=0.6)
+        # ax.plot(pred.time_index, p, label="Prediction", lw=1, color="red")
+        # ax.plot(forecast.time_index, forecast_values, label="Forecast", lw=0.7, color="green", alpha=0.7)
+        # ax.set_title(f"{spi_column}\nRMSE={rmse_val:.2f}, r={corr_val:.2f}", fontsize=10)
+        # ax.grid(True)
+        # ax.legend(loc="upper right", fontsize=8)  # Add legend to each subplot
 
-        if i % 4 == 0:
-            ax.set_ylabel("SPI Value")
-        if i >= 12:
-            ax.set_xlabel("Date")
+        # if i % 4 == 0:
+        #     ax.set_ylabel("SPI Value")
+        # if i >= 12:
+        #     ax.set_xlabel("Date")
 
-        results.append({"rmse": rmse_val, "corr": corr_val, "spi": spi_column})
+        # results.append({"rmse": rmse_val, "corr": corr_val, "spi": spi_column})
+        results.append({
+            "rmse": rmse_val,
+            "corr": corr_val,
+            "std_ref": std_ref,
+            "std_model": std_sim,
+            "crmse": crmse_val,
+            "spi": spi_column
+        })
 
-    # --- Save subplot ---
-    fig.suptitle(f"{station_name} - {model_name}", fontsize=14, weight="bold")
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
-    # plt.legend(loc="upper right", fontsize=8)
-    plt.savefig(
-        os.path.join(output_folder, f"{station_name}_{model_name}.png"),
-        dpi=300,
-        bbox_inches="tight"
-    )
-    plt.close()
+
+    # # --- Save subplot ---
+    # fig.suptitle(f"{station_name} - {model_name}", fontsize=14, weight="bold")
+    # fig.tight_layout(rect=[0, 0, 1, 0.96])
+    # # plt.legend(loc="upper right", fontsize=8)
+    # plt.savefig(
+    #     os.path.join(output_folder, f"{station_name}_{model_name}.png"),
+    #     dpi=300,
+    #     bbox_inches="tight"
+    # )
+    # plt.close()
     return results
 
+def taylor_diagram(df, station, spi, outfile):
+    subset = df[(df["station"]==station) & (df["spi"]==spi)]
+
+    std_ref = subset["std_ref"].iloc[0]  # reference std (same for all models)
+    fig = plt.figure(figsize=(7,7))
+    ax = fig.add_subplot(111, polar=True)
+    ax.set_theta_direction(-1)
+    ax.set_theta_offset(np.pi/2.0)
+
+    # Reference point
+    ax.plot(0, std_ref, 'ko', label="Reference")
+
+    for _, row in subset.iterrows():
+        theta = np.arccos(np.clip(row["corr"], -1, 1))
+        ax.plot(theta, row["std_model"], 'o', label=row["model"])
+
+    ax.set_title(f"Taylor Diagram - Station {station}, {spi}")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.05))
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 
@@ -300,3 +332,15 @@ pd.DataFrame(all_results).to_csv(
     os.path.join(output_folder, "summary_metrics.csv"), index=False
 )
 print("✅ Done! Results saved in:", output_folder)
+
+
+metrics_df = pd.read_csv(os.path.join(output_folder, "summary_metrics.csv"))
+
+# # Example: one diagram
+# taylor_diagram(metrics_df, "40700", "SPI_3", os.path.join(output_folder, "taylor_40700_SPI3.png"))
+
+# Or loop all station × SPI
+for st in metrics_df["station"].unique():
+    for spi in metrics_df["spi"].unique():
+        taylor_diagram(metrics_df, st, spi, os.path.join(output_folder, f"taylor_{st}_{spi}.png"))
+
