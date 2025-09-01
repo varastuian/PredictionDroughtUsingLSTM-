@@ -1,0 +1,53 @@
+import pandas as pd
+
+# Read CSV
+df = pd.read_csv("Data/raw_data.csv",parse_dates=['data'])
+
+# Convert 'data' column to datetime safely
+# df['data'] = pd.to_datetime(df['data'], errors='coerce', dayfirst=False)
+
+# Ensure numeric
+df['tm_m'] = pd.to_numeric(df['tm_m'], errors='coerce')
+df['rrr24'] = pd.to_numeric(df['rrr24'], errors='coerce')
+
+# Add year
+df['year'] = df['data'].dt.year
+
+# Compute annual stats
+annual = df.groupby(['station_id', 'station_name', 'year']).agg({
+    'tm_m': 'mean',   # mean monthly temp -> mean annual temp
+    'rrr24': 'sum'    # sum monthly rainfall -> annual rainfall
+}).reset_index()
+
+# De Martonne index
+annual['de_martonne'] = annual['rrr24'] / (annual['tm_m'] + 10)
+
+# Average per station over all years
+station_avg = annual.groupby(['station_id', 'station_name']).agg({
+    'de_martonne': 'mean'
+}).reset_index()
+
+# Add climate classification
+def classify_dm(dm):
+    if dm <= 15:
+        return "Arid"
+    elif 15 < dm <= 24:
+        return "Semi-arid"
+    elif 24 < dm <= 30:
+        return "Moderately-arid (Mediterranean)"
+    elif 30 < dm <= 35:
+        return "Slightly-arid"
+    elif 35 < dm <= 40:
+        return "Moderately-humid"
+    elif 40 < dm <= 50:
+        return "Humid"
+    elif 50 < dm <= 60:
+        return "Very-humid"
+    else:
+        return "Excess"
+
+station_avg['climate'] = station_avg['de_martonne'].apply(classify_dm)
+
+print(station_avg)
+print(annual.groupby('station_name')['rrr24'].sum())
+print(annual.groupby('station_name')['tm_m'].mean())
