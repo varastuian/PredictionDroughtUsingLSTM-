@@ -49,5 +49,4 @@ def classify_dm(dm):
 station_avg['climate'] = station_avg['de_martonne'].apply(classify_dm)
 
 print(station_avg)
-print(annual.groupby('station_name')['rrr24'].sum())
-print(annual.groupby('station_name')['tm_m'].mean())
+
