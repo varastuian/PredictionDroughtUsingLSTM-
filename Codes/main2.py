@@ -28,8 +28,10 @@ os.makedirs(output_folder, exist_ok=True)
 
 def forecast(df, spi_columns, station_name, model_name):
     results = []
+    fig, axes = plt.subplots(3, 2, figsize=(20, 16), sharex=True, sharey=False)
+    axes = axes.flatten()
+    for i, spi_column in enumerate(spi_columns):
 
-    for spi_column in spi_columns:
         df_spi = df[["ds", spi_column]].dropna().reset_index(drop=True)
         print(f"Running {model_name} on {station_name} - {spi_column}")
 
@@ -120,6 +122,28 @@ def forecast(df, spi_columns, station_name, model_name):
         std_ref = np.std(o, ddof=1)
         std_sim = np.std(p, ddof=1)
         crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2*std_ref*std_sim*corr_val)
+        # Forecast till 2099
+        last_date = df["ds"].max()
+        months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+        forecast = model.predict(months_to_2099, series=series)
+
+        if use_scaler:
+            forecast_values = scaler.inverse_transform(forecast.values())
+        else:
+            forecast_values = forecast.values()
+
+        ax = axes[i]
+        ax.plot(df_spi["ds"], df_spi[spi_column], label="True", lw=0.7, alpha=0.6)
+        ax.plot(pred.time_index, p, label="Prediction", lw=1, color="red")
+        ax.plot(forecast.time_index, forecast_values, label="Forecast", lw=0.7, color="green", alpha=0.7)
+        ax.set_title(f"{spi_column}\nRMSE={rmse_val:.2f}, r={corr_val:.2f}", fontsize=10)
+        ax.grid(True)
+        ax.legend(loc="upper right", fontsize=8)  # Add legend to each subplot
+
+        if i % 4 == 0:
+            ax.set_ylabel("SPI Value")
+        if i >= 12:
+            ax.set_xlabel("Date")
 
         results.append({"rmse": rmse_val, "corr": corr_val, "std_ref": std_ref,
                         "std_model": std_sim, "crmse": crmse_val, "spi": spi_column})
@@ -162,17 +186,17 @@ def taylor_diagram_panel(metrics_df, station, outfile):
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
-
+def heatmap()
 # -----------------------------
 # Main Loop
 # -----------------------------
 all_results = []
-spi_columns = ["SPI_1", "SPI_3", "SPI_6", "SPI_12"]
+# spi_columns = ["SPI_1", "SPI_3", "SPI_6", "SPI_12"]
 
 for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station_name = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
-
+    spi_columns = [c for c in df.columns if c.startswith("SPI_")]
     for model_name in ["TFT", "NBEATS", "NHiTS", "TCN", "LSTM", "WTLSTM", "ExtraTrees", "RandomForest", "SVR"]:
         results_list = forecast(df.copy(), spi_columns, station_name, model_name)
         for result in results_list:
@@ -187,3 +211,14 @@ print("✅ Done! Results saved in:", output_folder)
 # Plot Taylor diagrams (4-panel per station)
 for st in metrics_df["station"].unique():
     taylor_diagram_panel(metrics_df, st, os.path.join(output_folder, f"taylor_{st}.png"))
+
+
+write a full better code 
+
+my spis are 1,3
+            6,9
+            12,24
+
+instead of forecast using all model , forecast till 2099 using best model for each spi of each station
+
+in addition plot heatmap  
