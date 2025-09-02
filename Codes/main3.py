@@ -23,21 +23,20 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 12
 horizon = 1
-num_epochs = 350
+num_epochs = 150
 input_folder = "./Data/testdata"
-output_folder = "./Results/r4"
+output_folder = "./Results/r5"
 os.makedirs(output_folder, exist_ok=True)
 
 # SPI groups
-SPI_GROUPS = [["SPI_1", "SPI_3"], ["SPI_6", "SPI_9"], ["SPI_12", "SPI_24"]]
+SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
 
 
 def taylor_diagram_panel(metrics_df, station, outfile):
-    spi_list = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
 
     # Collect subsets & radial max
     subsets, rmax = [], 0.0
-    for spi in spi_list:
+    for spi in SPI:
         sub = metrics_df[(metrics_df["station"] == station) & (metrics_df["spi"] == spi)]
         subsets.append(sub)
         if not sub.empty:
@@ -60,7 +59,7 @@ def taylor_diagram_panel(metrics_df, station, outfile):
     corrs = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.99, 1.0])
     angles = np.arccos(corrs)
 
-    for ax, spi, sub in zip(axes, spi_list, subsets):
+    for ax, spi, sub in zip(axes, SPI, subsets):
         # quarter-circle setup
         ax.set_theta_zero_location("E")
         ax.set_theta_direction(-1)
@@ -264,13 +263,20 @@ def plot_heatmaps(station, results, outfile):
             center=0,
             vmin=vmin, vmax=vmax,
             ax=axes[i],
-            cbar=False
+            cbar=False,
+            linewidths=0,
+            linecolor="none"
+            # square=True
+            # xticklabels=True,
+            # yticklabels=True
         )
         axes[i].set_title(f"{spi}", fontsize=12, weight="bold")
         axes[i].set_xlabel("Month")
         axes[i].set_ylabel("Year")
         axes[i].set_xticklabels(["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], rotation=0)
-
+        # Remove all spines and ticks
+        # axes[i].spines[:].set_visible(False)  # remove spines
+        # axes[i].tick_params(left=False, bottom=False)  # remove tick marks
     # Add ONE big colorbar on the right
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
     fig.colorbar(hm.collections[0], cax=cbar_ax, label="SPI Value")
@@ -280,6 +286,29 @@ def plot_heatmaps(station, results, outfile):
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
+
+def pick_best_model(models, weights=None):
+    """
+    Pick best model using multiple metrics.
+    """
+    if weights is None:
+        weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
+
+    # Extract metric arrays
+    rmse_vals = np.array([m["rmse"] for m in models])
+    crmse_vals = np.array([m["crmse"] for m in models])
+    corr_vals = np.array([m["corr"] for m in models])
+
+    # Normalize metrics
+    rmse_norm = (rmse_vals - rmse_vals.min()) / (rmse_vals.max() - rmse_vals.min() + 1e-8)
+    crmse_norm = (crmse_vals - crmse_vals.min()) / (crmse_vals.max() - crmse_vals.min() + 1e-8)
+    corr_norm = (corr_vals - corr_vals.min()) / (corr_vals.max() - corr_vals.min() + 1e-8)
+
+    # Compute combined score (lower is better)
+    scores = weights["rmse"]*rmse_norm + weights["crmse"]*crmse_norm - weights["corr"]*corr_norm
+
+    best_idx = np.argmin(scores)
+    return models[best_idx]
 # -----------------------------
 # Main Loop
 # -----------------------------
@@ -291,17 +320,18 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
 
     best_results = []
 
-    for group in SPI_GROUPS:
-        for spi in group:
-            model_metrics = []
-            for model_name in ["TFT", "NBEATS", "NHiTS", "TCN", "LSTM", "WTLSTM", "ExtraTrees", "RandomForest", "SVR"]:
-                res = train_and_forecast(df.copy(), spi, model_name)
-                model_metrics.append(res)
-                all_results.append({k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} | {"station": station})
 
-            # Pick best model (lowest RMSE)
-            best = min(model_metrics, key=lambda x: x["rmse"])
-            best_results.append(best)
+    for spi in SPI:
+        model_metrics = []
+        for model_name in ["TFT", "NBEATS", "NHiTS", "TCN", "LSTM", "WTLSTM", "ExtraTrees", "RandomForest", "SVR"]:
+            res = train_and_forecast(df.copy(), spi, model_name)
+            model_metrics.append(res)
+            all_results.append({k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} | {"station": station})
+
+        # Pick best model (lowest RMSE)
+        # best = min(model_metrics, key=lambda x: x["rmse"])
+        # best_results.append(best)
+        best_results.append(pick_best_model(model_metrics))
 
     # Save plots per station
     plot_final_forecasts(station, best_results, os.path.join(output_folder, f"{station}_forecasts.png"))
