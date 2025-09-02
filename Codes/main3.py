@@ -7,7 +7,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from darts import TimeSeries
 from darts.metrics import rmse
-from darts.models import TFTModel, NBEATSModel, NHiTSModel, TCNModel, RegressionModel, RNNModel
+from darts.models import (
+    TFTModel, NBEATSModel, NHiTSModel, TCNModel, RNNModel, RegressionModel,
+    ARIMA, ExponentialSmoothing
+)
 from matplotlib import gridspec
 
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
@@ -22,10 +25,10 @@ import pywt
 SEED = 42
 np.random.seed(SEED)
 window_size = 12
-horizon = 1
-num_epochs = 150
+horizon = 12
+num_epochs = 10
 input_folder = "./Data/testdata"
-output_folder = "./Results/r5"
+output_folder = "./Results/r3"
 os.makedirs(output_folder, exist_ok=True)
 
 # SPI groups
@@ -102,101 +105,6 @@ def taylor_diagram_panel(metrics_df, station, outfile):
 
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
-
-
-# -----------------------------
-# Model training & forecast
-# -----------------------------
-def train_and_forecast(df, spi, model_name):
-    df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
-
-    use_scaler = model_name in ["SVR", "LSTM", "WTLSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
-    if use_scaler:
-        scaler = StandardScaler()
-        df_spi[spi + "_scaled"] = scaler.fit_transform(df_spi[[spi]])
-        value_col = spi + "_scaled"
-    else:
-        scaler = None
-        value_col = spi
-
-    series = TimeSeries.from_dataframe(df_spi, "ds", value_col)
-    train, test = series[:-48], series[-48:]
-
-    # -----------------------------
-    # Model selection
-    # -----------------------------
-    if model_name == "ExtraTrees":
-        model = RegressionModel(ExtraTreesRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
-                                lags=window_size, output_chunk_length=horizon)
-    elif model_name == "RandomForest":
-        model = RegressionModel(RandomForestRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
-                                lags=window_size, output_chunk_length=horizon)
-    elif model_name == "SVR":
-        model = RegressionModel(SVR(kernel="rbf", C=10, gamma="scale", epsilon=0.1),
-                                lags=window_size, output_chunk_length=horizon)
-    elif model_name == "LSTM":
-        model = RNNModel(model="LSTM", input_chunk_length=window_size, output_chunk_length=horizon,
-                         training_length=window_size, n_epochs=num_epochs, dropout=0.2,
-                         hidden_dim=64, batch_size=16, random_state=SEED)
-    elif model_name == "WTLSTM":
-        coeffs = pywt.wavedec(df_spi[value_col].values, "db4", level=1)
-        threshold = np.std(coeffs[-1]) * np.sqrt(2*np.log(len(df_spi)))
-        coeffs_denoised = [pywt.threshold(c, threshold, mode='soft') if i > 0 else c for i, c in enumerate(coeffs)]
-        denoised = pywt.waverec(coeffs_denoised, wavelet='db4')
-        df_spi['spi_denoised'] = denoised[:len(df_spi)]
-        series = TimeSeries.from_dataframe(df_spi, 'ds', 'spi_denoised')
-        train, test = series[:-48], series[-48:]
-        model = RNNModel(model='LSTM', input_chunk_length=window_size, output_chunk_length=horizon,
-                         training_length=window_size, n_epochs=num_epochs, dropout=0.2,
-                         hidden_dim=64, batch_size=16, random_state=SEED)
-    elif model_name == "TFT":
-        model = TFTModel(input_chunk_length=window_size, output_chunk_length=horizon,
-                         hidden_size=64, lstm_layers=1, dropout=0.2, batch_size=32, n_epochs=num_epochs,
-                         add_relative_index=True,
-                         add_encoders={"cyclic": {"future": ["month"]}, "datetime_attribute": {"future": ["year"]}},
-                         random_state=SEED)
-    elif model_name == "NBEATS":
-        model = NBEATSModel(input_chunk_length=window_size, output_chunk_length=horizon,
-                            n_epochs=num_epochs, batch_size=32, random_state=SEED)
-    elif model_name == "NHiTS":
-        model = NHiTSModel(input_chunk_length=window_size, output_chunk_length=horizon,
-                           n_epochs=num_epochs, batch_size=32, random_state=SEED)
-    elif model_name == "TCN":
-        model = TCNModel(input_chunk_length=window_size, output_chunk_length=horizon,
-                         n_epochs=num_epochs, dropout=0.1, dilation_base=2,
-                         num_filters=32, kernel_size=3, random_state=SEED)
-
-    # -----------------------------
-    # Train & evaluate
-    # -----------------------------
-    model.fit(train)
-    pred = model.historical_forecasts(series, start=train.end_time(), forecast_horizon=1,
-                                      stride=1, retrain=False, verbose=False)
-    pred = pred.slice_intersect(test)
-
-    if use_scaler:
-        o = scaler.inverse_transform(test.slice_intersect(pred).values().reshape(-1, 1)).flatten()
-        p = scaler.inverse_transform(pred.values().reshape(-1, 1)).flatten()
-    else:
-        o = test.values().flatten()
-        p = pred.values().flatten()
-
-    rmse_val = rmse(test, pred)
-    corr_val = pearsonr(o, p)[0]
-    std_ref = np.std(o, ddof=1)
-    std_sim = np.std(p, ddof=1)
-    crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2*std_ref*std_sim*corr_val)
-
-    # Forecast till 2099
-    last_date = df["ds"].max()
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
-    forecast = model.predict(months_to_2099, series=series)
-
-    return {
-        "rmse": rmse_val, "corr": corr_val, "std_ref": std_ref,
-        "std_model": std_sim, "crmse": crmse_val, "spi": spi,
-        "model": model_name, "scaler": scaler, "forecast": forecast, "pred": pred, "series": series
-    }
 
 # -----------------------------
 # Plot helpers
@@ -287,6 +195,143 @@ def plot_heatmaps(station, results, outfile):
     plt.close()
 
 
+# -----------------------------
+# Model training & forecast
+# -----------------------------
+def train_and_forecast(df, spi, model_name,covariates=None):
+    df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
+
+    use_scaler = model_name in ["SVR", "LSTM", "WTLSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
+    if use_scaler:
+        scaler = StandardScaler()
+        df_spi[spi + "_scaled"] = scaler.fit_transform(df_spi[[spi]])
+        value_col = spi + "_scaled"
+    else:
+        scaler = None
+        value_col = spi
+
+    series = TimeSeries.from_dataframe(df_spi, "ds", value_col)
+    train, test = series[:-48], series[-48:]
+
+    # -----------------------------
+    # Model selection
+    # -----------------------------
+    if model_name == "ARIMA":
+        model = ARIMA()
+    elif model_name == "ETS":
+        model = ExponentialSmoothing()
+    elif model_name == "ExtraTrees":
+        model = RegressionModel(ExtraTreesRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
+                                lags=window_size, output_chunk_length=horizon)
+    elif model_name == "RandomForest":
+        model = RegressionModel(RandomForestRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
+                                lags=window_size, output_chunk_length=horizon)
+    elif model_name == "SVR":
+        model = RegressionModel(SVR(kernel="rbf", C=10, gamma="scale", epsilon=0.1),
+                                lags=window_size, output_chunk_length=horizon)
+    elif model_name == "LSTM":
+        model = RNNModel(model="LSTM", input_chunk_length=window_size, output_chunk_length=horizon,
+                         training_length=window_size, n_epochs=num_epochs, dropout=0.2,
+                         hidden_dim=64, batch_size=16, random_state=SEED)
+    elif model_name == "WTLSTM":
+        coeffs = pywt.wavedec(df_spi[value_col].values, "db4", level=1)
+        threshold = np.std(coeffs[-1]) * np.sqrt(2*np.log(len(df_spi)))
+        coeffs_denoised = [pywt.threshold(c, threshold, mode='soft') if i > 0 else c for i, c in enumerate(coeffs)]
+        denoised = pywt.waverec(coeffs_denoised, wavelet='db4')
+        df_spi['spi_denoised'] = denoised[:len(df_spi)]
+        series = TimeSeries.from_dataframe(df_spi, 'ds', 'spi_denoised')
+        train, test = series[:-48], series[-48:]
+        model = RNNModel(model='LSTM', input_chunk_length=window_size, output_chunk_length=horizon,
+                         training_length=window_size, n_epochs=num_epochs, dropout=0.2,
+                         hidden_dim=64, batch_size=16, random_state=SEED)
+    elif model_name == "TFT":
+        model = TFTModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                         hidden_size=64, lstm_layers=1, dropout=0.2, batch_size=32, n_epochs=num_epochs,
+                         add_relative_index=True,
+                         add_encoders={"cyclic": {"future": ["month"]}, "datetime_attribute": {"future": ["year"]}},
+                         random_state=SEED)
+    elif model_name == "NBEATS":
+        model = NBEATSModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                            n_epochs=num_epochs, batch_size=32, random_state=SEED)
+    elif model_name == "NHiTS":
+        model = NHiTSModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                           n_epochs=num_epochs, batch_size=32, random_state=SEED)
+    elif model_name == "TCN":
+        model = TCNModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                         n_epochs=num_epochs, dropout=0.1, dilation_base=2,
+                         num_filters=32, kernel_size=3, random_state=SEED)
+
+    # -----------------------------
+    # Train & evaluate
+    # -----------------------------
+    model.fit(train)
+    # pred = model.historical_forecasts(series, start=train.end_time(), forecast_horizon=1,
+    #                                   stride=1, retrain=False, verbose=False)
+
+    # n = len(test)
+    # try:
+    #     pred = model.predict(n, series=train)  
+    # except Exception:
+    #     pred = model.predict(n)
+
+
+    # -----------------------------
+    # Backtesting
+    # -----------------------------
+    if model_name in ["ARIMA", "ETS"]:
+            pred = model.historical_forecasts(
+                series,
+                start=0.8,  # 80% for training
+                forecast_horizon=horizon,
+                stride=1,
+                retrain=True,
+                verbose=False
+            )
+    else:
+        pred = model.historical_forecasts(
+            series,
+            start=0.8,
+            forecast_horizon=horizon,
+            stride=1,
+            retrain=True,
+            verbose=False,
+            future_covariates=covariates
+        )
+
+    pred = pred.slice_intersect(test)
+
+
+
+
+    if use_scaler:
+        o = scaler.inverse_transform(test.slice_intersect(pred).values().reshape(-1, 1)).flatten()
+        p = scaler.inverse_transform(pred.values().reshape(-1, 1)).flatten()
+    else:
+        o = test.values().flatten()
+        p = pred.values().flatten()
+
+    rmse_val = rmse(test, pred)
+    corr_val = pearsonr(o, p)[0]
+    std_ref = np.std(o, ddof=1)
+    std_sim = np.std(p, ddof=1)
+    crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2*std_ref*std_sim*corr_val)
+
+    # Forecast till 2099
+    last_date = df["ds"].max()
+    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+    # forecast = model.predict(months_to_2099, series=series)
+    # forecast = model.predict(months_to_2099, future_covariates=covariates)
+    if model_name in ["ARIMA", "ETS"]:
+            forecast = model.predict(months_to_2099)
+    else:
+        forecast = model.predict(months_to_2099, future_covariates=covariates)
+    return {
+        "rmse": rmse_val, "corr": corr_val, "std_ref": std_ref,
+        "std_model": std_sim, "crmse": crmse_val, "spi": spi,
+        "model": model_name, "scaler": scaler, "forecast": forecast, "pred": pred, "series": series
+    }
+
+
 def pick_best_model(models, weights=None):
     """
     Pick best model using multiple metrics.
@@ -317,13 +362,15 @@ all_results = []
 for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
+    covariates = TimeSeries.from_dataframe(df, "ds", ["tm_m", "precip"])
 
     best_results = []
 
 
     for spi in SPI:
         model_metrics = []
-        for model_name in ["TFT", "NBEATS", "NHiTS", "TCN", "LSTM", "WTLSTM", "ExtraTrees", "RandomForest", "SVR"]:
+        for model_name in ["ARIMA","ETS","TFT","NBEATS","NHiTS","TCN","LSTM","WTLSTM","ExtraTrees","RandomForest","SVR"]:
+
             res = train_and_forecast(df.copy(), spi, model_name)
             model_metrics.append(res)
             all_results.append({k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} | {"station": station})
@@ -334,8 +381,8 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
         best_results.append(pick_best_model(model_metrics))
 
     # Save plots per station
-    plot_final_forecasts(station, best_results, os.path.join(output_folder, f"{station}_forecasts.png"))
-    plot_heatmaps(station, best_results, os.path.join(output_folder, f"{station}_heatmaps.png"))
+    plot_final_forecasts(station, best_results, os.path.join(output_folder, f"forecast_{station}.png"))
+    plot_heatmaps(station, best_results, os.path.join(output_folder, f"heatmap_{station}.png"))
 
 # Save metrics
 metrics_df = pd.DataFrame(all_results)
