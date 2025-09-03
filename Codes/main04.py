@@ -20,7 +20,7 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 24
 horizon = 12
-num_epochs = 20
+num_epochs = 150
 input_folder = "./Data/testdata"
 output_folder = "./Results/simple"
 os.makedirs(output_folder, exist_ok=True)
@@ -30,7 +30,7 @@ SPI = ["SPI_12"]
 # -----------------------------
 # Forecast function
 # -----------------------------
-def train_and_forecast(df, spi, model_name):
+def train_and_forecast(df, spi, model_name,covariates):
     df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
 
     # scale if needed
@@ -56,17 +56,17 @@ def train_and_forecast(df, spi, model_name):
     elif model_name == "ExtraTrees":
         model = RegressionModel(
             ExtraTreesRegressor(n_estimators=100, random_state=SEED, n_jobs=-1),
-            lags=window_size, output_chunk_length=horizon
+            lags=window_size, output_chunk_length=horizon,lags_future_covariates=[0],
         )
     elif model_name == "RandomForest":
         model = RegressionModel(
             RandomForestRegressor(n_estimators=100, random_state=SEED, n_jobs=-1),
-            lags=window_size, output_chunk_length=horizon
+            lags=window_size, output_chunk_length=horizon,lags_future_covariates=[0],
         )
     elif model_name == "SVR":
         model = RegressionModel(
             SVR(kernel="rbf", C=10, gamma="scale"),
-            lags=window_size, output_chunk_length=horizon
+            lags=window_size, output_chunk_length=horizon,lags_future_covariates=[0],
         )
     elif model_name == "LSTM":
         model = BlockRNNModel(
@@ -103,9 +103,17 @@ def train_and_forecast(df, spi, model_name):
     # -----------------------------
     # Fit + Forecast
     # -----------------------------
-    model.fit(train)
-    forecast = model.predict(len(test))
+    if isinstance(model, RegressionModel):
+        model.fit(train, future_covariates=covariates)
+        forecast = model.predict(len(test), future_covariates=covariates)
 
+    elif isinstance(model, BlockRNNModel):
+        model.fit(train, past_covariates=covariates)
+        forecast = model.predict(len(test), past_covariates=covariates)
+
+    else:  # ARIMA, ETS
+        model.fit(train)
+        forecast = model.predict(len(test))
     # inverse transform if scaled
     if scaler:
         test_vals = scaler.inverse_transform(test.values())
@@ -137,8 +145,9 @@ def train_and_forecast(df, spi, model_name):
 for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
+    covariates = TimeSeries.from_dataframe(df, "ds", ["tm_m", "precip"])
 
     for spi in SPI:
-        for model_name in ["ExtraTrees", "RandomForest", "SVR", "LSTM", "ARIMA"]:
+        for model_name in ["ExtraTrees", "RandomForest", "SVR", "LSTM" ,"WTLSTM","ARIMA"]:
             print(f"--- {station} {spi} {model_name} ---")
-            train_and_forecast(df.copy(), spi, model_name)
+            train_and_forecast(df.copy(), spi, model_name,covariates)
