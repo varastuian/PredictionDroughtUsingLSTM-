@@ -106,9 +106,8 @@ model = BlockRNNModel(
 )
 
 
-model.fit(train, val_series=test, past_covariates=train_cov,val_past_covariates=val_cov, verbose=True)
-
-pred = model.predict(len(test), past_covariates=val_cov)
+model.fit(train)
+pred = model.predict(len(test))
 pred = target_scaler.inverse_transform(pred)
 test_orig = target_scaler.inverse_transform(test)
 o = np.array(test_orig.values().flatten())
@@ -133,37 +132,37 @@ plt.savefig(outfile, dpi=300, bbox_inches="tight")
 plt.close()
 
 
-# -----------------------------
-# Forecast till 2099
-# -----------------------------
-last_date = df['ds'].max()
-months_to_2099 = (2050 - last_date.year) * 12 + (12 - last_date.month + 1)
-print(len(series_scaled))
-# model = BlockRNNModel(
-#     model='LSTM',
-#     input_chunk_length=window_size+30,
-#     output_chunk_length=horizon+11,
-#     n_epochs=num_epochs,
-#     dropout=0.1,
-#     hidden_dim=64,
-#     batch_size=16,
-#     random_state=SEED
-# )
-model.fit(series_scaled ,verbose=True)
+# # -----------------------------
+# # Forecast till 2099
+# # -----------------------------
+# last_date = df['ds'].max()
+# months_to_2099 = (2050 - last_date.year) * 12 + (12 - last_date.month + 1)
+# print(len(series_scaled))
+# # model = BlockRNNModel(
+# #     model='LSTM',
+# #     input_chunk_length=window_size+30,
+# #     output_chunk_length=horizon+11,
+# #     n_epochs=num_epochs,
+# #     dropout=0.1,
+# #     hidden_dim=64,
+# #     batch_size=16,
+# #     random_state=SEED
+# # )
+# model.fit(series_scaled ,verbose=True)
 
-forecast = model.predict(months_to_2099)
-forecast = target_scaler.inverse_transform(forecast)
-forecast_values = forecast.values()
-plt.figure(figsize=(16,6))
-plt.plot(df['ds'], df[spi_column], label="Historical", lw=2)
-plt.plot(forecast.time_index, forecast_values, label="Forecast", lw=2, color="green", linestyle="--")
-plt.title(f"{spi_column} LSTM Forecast till 2099")
-plt.title(f"{spi_column} LSTM Forecast till 2099")
-plt.xlabel("Date")
-plt.ylabel(spi_column)
-plt.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
-plt.legend()
-plt.grid(True)
-outfile = os.path.join(output_folder, f"{spi_column}_lstmForecast.png")
-plt.savefig(outfile, dpi=300, bbox_inches="tight")
-plt.close()
+# forecast = model.predict(months_to_2099)
+# forecast = target_scaler.inverse_transform(forecast)
+# forecast_values = forecast.values()
+# plt.figure(figsize=(16,6))
+# plt.plot(df['ds'], df[spi_column], label="Historical", lw=2)
+# plt.plot(forecast.time_index, forecast_values, label="Forecast", lw=2, color="green", linestyle="--")
+# plt.title(f"{spi_column} LSTM Forecast till 2099")
+# plt.title(f"{spi_column} LSTM Forecast till 2099")
+# plt.xlabel("Date")
+# plt.ylabel(spi_column)
+# plt.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
+# plt.legend()
+# plt.grid(True)
+# outfile = os.path.join(output_folder, f"{spi_column}_lstmForecast.png")
+# plt.savefig(outfile, dpi=300, bbox_inches="tight")
+# plt.close()
