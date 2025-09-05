@@ -86,8 +86,8 @@ val_cov_extended = cov_scaled.slice(train_cov.start_time(), cov_scaled.end_time(
 # ===============================
 model = BlockRNNModel(
     model="LSTM",
-    input_chunk_length=50,
-    output_chunk_length=31,
+    input_chunk_length=36,
+    output_chunk_length=12,
     # hidden_dim=64,
     # n_rnn_layers=2,
     # dropout=0.2,
