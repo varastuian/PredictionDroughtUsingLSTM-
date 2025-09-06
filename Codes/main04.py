@@ -8,9 +8,11 @@ from darts.models import (
     ARIMA, ExponentialSmoothing,
     RegressionModel, BlockRNNModel
 )
+from darts.dataprocessing.transformers import Scaler
+
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.svm import SVR
-from sklearn.preprocessing import StandardScaler
+# from sklearn.preprocessing import StandardScaler
 import pywt
 
 # -----------------------------
@@ -18,14 +20,15 @@ import pywt
 # -----------------------------
 SEED = 42
 np.random.seed(SEED)
-window_size = 24
-horizon = 12
-num_epochs = 150
+window_size = 36
+horizon = 1
+num_epochs = 100
 input_folder = "./Data/testdata"
-output_folder = "./Results/simple"
+output_folder = "./Results/r12"
 os.makedirs(output_folder, exist_ok=True)
 
-SPI = ["SPI_12"]
+# SPI = ["SPI_12"]
+SPI = ["SPI_1","SPI_3","SPI_6","SPI_9","SPI_12","SPI_24"]
 
 # -----------------------------
 # Forecast function
