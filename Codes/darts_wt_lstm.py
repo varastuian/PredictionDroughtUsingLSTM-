@@ -17,7 +17,7 @@ import glob
 # -----------------------------
 input_folder = "./Data/testdata"
 # SPI = ["SPI_1","SPI_3","SPI_6","SPI_9","SPI_12","SPI_24"]
-SPI = ["SPI_6","SPI_9","SPI_12"]
+SPI = ["SPI_9"]
 
 all_results = []
 
@@ -25,7 +25,7 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station = os.path.splitext(os.path.basename(file))[0]
     if station !="40706":
         continue
-    output_folder = f"./Results/wblstm2/{station}"
+    output_folder = f"./Results/wblstm3/{station}"
     os.makedirs(output_folder, exist_ok=True)
     df = pd.read_csv(file, parse_dates=["ds"])
     df.sort_values("ds", inplace=True)
@@ -55,7 +55,7 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
         model = BlockRNNModel(
             model='LSTM',
             input_chunk_length=36,
-            output_chunk_length=1,
+            output_chunk_length=6,
             n_epochs=91,
             dropout=0.2,
             hidden_dim=64,
