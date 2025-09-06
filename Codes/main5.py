@@ -287,7 +287,7 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
     if model_name in ["ARIMA", "ETS"]:
         model.fit(train)
     else:
-        model.fit(train, val_series=test, past_covariates=train_cov,val_past_covariates=test_cov, verbose=True)
+        model.fit(train, val_series=test, past_covariates=train_cov,val_past_covariates=test_cov)
 
     n = len(test)
     try:
@@ -295,34 +295,6 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
  
     except Exception:
         pred = model.predict(n)
-
-
-    # # -----------------------------
-    # # Backtesting
-    # # -----------------------------
-    # if model_name in ["ARIMA", "ETS"]:
-    #         pred = model.historical_forecasts(
-    #             series,
-    #             start=0.8,  # 80% for training
-    #             forecast_horizon=horizon,
-    #             stride=1,
-    #             retrain=True,
-    #             verbose=False
-    #         )
-    # else:
-    #     pred = model.historical_forecasts(
-    #         series,
-    #         start=0.8,
-    #         forecast_horizon=horizon,
-    #         stride=1,
-    #         retrain=True,
-    #         verbose=False,
-    #         future_covariates=covariates
-    #     )
-
-    # pred = pred.slice_intersect(test)
-
-
 
 
     if use_scaler:
@@ -347,7 +319,7 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
     if model_name in ["ARIMA", "ETS"]:
         model.fit(series)
     else:
-        model.fit(series, past_covariates=covariates, verbose=True)
+        model.fit(series, past_covariates=covariates)
 
     last_date = df["ds"].max()
     months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
@@ -423,7 +395,7 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
 
     for spi in SPI:
         model_metrics = []
-        for model_name in ["LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN","ExtraTrees","RandomForest","SVR"]:
+        for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
             print(f"## ** ______running :{station} {spi} {model_name}")
 
             res = train_and_forecast(df, spi, model_name)
