@@ -13,11 +13,10 @@ from darts.models import (
 )
 from darts.dataprocessing.transformers import Scaler
 
-from matplotlib import gridspec
+# from matplotlib import gridspec
 
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.svm import SVR
-from sklearn.preprocessing import StandardScaler
 from scipy.stats import pearsonr
 import pywt
 
@@ -28,14 +27,14 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 36
 horizon = 1
-num_epochs = 1
+num_epochs = 85
 input_folder = "./Data/testdata"
 output_folder = "./Results/r11"
 os.makedirs(output_folder, exist_ok=True)
 
 # SPI groups
-# SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-SPI = [ "SPI_12"]
+SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+# SPI = [ "SPI_12"]
 
 
 def taylor_diagram_panel(metrics_df, station, outfile):
@@ -126,15 +125,19 @@ def plot_final_forecasts(station, results, outfile):
 
         # Prediction
         if res["pred"] is not None:
+            # if scaler:
+            #     pred_inv = scaler.inverse_transform(res["pred"])
+            #     p = pred_inv.values().flatten()
+            # else:
             p = res["pred"].values().flatten()
-            if scaler:
-                p = scaler.inverse_transform(p.reshape(-1, 1)).flatten()
             axes[i].plot(res["pred"].time_index, p, lw=0.7, color="red", label="Prediction")
 
         # Forecast
+        # if scaler:
+        #     forecast_inv = scaler.inverse_transform(res["forecast"])
+        #     f = forecast_inv.values().flatten()
+        # else:
         f = res["forecast"].values().flatten()
-        if scaler:
-            f = scaler.inverse_transform(f.reshape(-1, 1)).flatten()
         axes[i].plot(res["forecast"].time_index, f, lw=0.7, color="green", label="Forecast")
 
         axes[i].set_title(f"{spi} — Best: {res['model']}\nRMSE={res['rmse']:.2f}, r={res['corr']:.2f}", fontsize=10)
@@ -308,8 +311,8 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
 
     rmse_val = rmse(test, pred)
     corr_val = pearsonr(o, p)[0]
-    mae_val = mae(test, pred)
-    mape_val = mape(test, pred)
+    # mae_val = mae(test, pred)
+    # mape_val = mape(test, pred)
 
     std_ref = np.std(o, ddof=1)
     std_sim = np.std(p, ddof=1)
@@ -395,7 +398,8 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
 
     for spi in SPI:
         model_metrics = []
-        for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
+        # for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
+        for model_name in ["WTLSTM","ExtraTrees","RandomForest","SVR","LSTM"]:
             print(f"## ** ______running :{station} {spi} {model_name}")
 
             res = train_and_forecast(df, spi, model_name)
