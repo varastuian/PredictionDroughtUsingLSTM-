@@ -191,13 +191,14 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 36
 horizon = 12
-num_epochs = 190
+num_epochs = 5
 input_folder = "./Data/testdata"
-output_folder = "./Results/r17"
+output_folder = "./Results/r19"
 os.makedirs(output_folder, exist_ok=True)
 
 # SPI groups
-SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+# SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+SPI = [ "SPI_12"]
 
 
 
@@ -207,10 +208,14 @@ def forecast_covariate_to_2099(df, col, last_date):
     last_date: pd.Timestamp of last observed date
     returns: TimeSeries of forecasts starting from first future month (monthly freq)
     """
-    # ensure monthly index
+    df = df.copy()
+    df["ds"] = pd.to_datetime(df["ds"])
+    df = df.set_index("ds").asfreq("MS")  # monthly start
+    
+    df = df.reset_index()
     scaler = Scaler()
-    series = scaler.fit_transform(TimeSeries.from_dataframe(df[["ds", col]].dropna(), 'ds', col))
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+    series_scaled = scaler.fit_transform(TimeSeries.from_dataframe(df, 'ds', col))
+    months_to_2099 = (2029 - last_date.year) * 12 + (12 - last_date.month + 1)
     if months_to_2099 <= 0:
         return TimeSeries.from_dataframe(pd.DataFrame({"ds": [], col: []}), "ds", col)  # nothing to do
 
@@ -227,10 +232,12 @@ def forecast_covariate_to_2099(df, col, last_date):
         )
 
 
-    model.fit(series)
-    fc = model.predict(n=months_to_2099)
-    fc = scaler.inverse_transform(fc)
-    return fc 
+    model.fit(series_scaled)
+    fc_scaled = model.predict(n=months_to_2099, series=series_scaled)
+    fc = scaler.inverse_transform(fc_scaled)
+    series = scaler.inverse_transform(series_scaled)
+
+    return series,fc 
 
 
 def build_future_covariates(df, last_date, window_size=36):
@@ -238,14 +245,15 @@ def build_future_covariates(df, last_date, window_size=36):
     Build future covariates (temperature & precipitation) to 2099.
     Returns: concatenated past window + future forecasts as a TimeSeries.
     """
-    cov_df = df[["ds", "tm_m", "precip"]].dropna().reset_index(drop=True)
-    hist_ts = TimeSeries.from_dataframe(cov_df, "ds", ["tm_m", "precip"])
+    # cov_df = df[["ds", "tm_m", "precip"]].dropna().reset_index(drop=True)
+    cov_df = df[["ds", "tm_m", "precip"]]
+    hist_tm, fc_tm = forecast_covariate_to_2099(cov_df, "tm_m", last_date)
+    hist_pr, fc_pr = forecast_covariate_to_2099(cov_df, "precip", last_date)
+    hist_ts = hist_tm.stack(hist_pr)  # combine into multivariate series
 
     last_cov = hist_ts[-window_size:] if len(hist_ts) >= window_size else hist_ts
 
-    # Forecast each covariate
-    fc_tm = forecast_covariate_to_2099(cov_df, "tm_m", last_date)
-    fc_pr = forecast_covariate_to_2099(cov_df, "precip", last_date)
+
 
     future_df = pd.DataFrame({
         "ds": fc_tm.time_index,
@@ -255,6 +263,7 @@ def build_future_covariates(df, last_date, window_size=36):
     future_ts = TimeSeries.from_dataframe(future_df, "ds", ["tm_m", "precip"])
 
     full_future_cov = last_cov.concatenate(future_ts)
+    # a,b = hist_ts.split_before(0.95)
     return full_future_cov, hist_ts, future_ts
 
 def plot_covariate_forecasts(hist_ts, future_ts, covariate, color):
@@ -299,7 +308,8 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
 
     train, test = series.split_before(0.8)
     train_cov, test_cov = covariates.split_before(0.8)
-
+    o = test.values().flatten()  # observed values
+    std_ref = np.std(o, ddof=1)
     # -----------------------------
     # Model selection
     # -----------------------------
@@ -394,7 +404,7 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
     # mae_val = mae(test, pred)
     # mape_val = mape(test, pred)
 
-    std_ref = np.std(o, ddof=1)
+    # std_ref = np.std(o, ddof=1)
     std_sim = np.std(p, ddof=1)
     crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2*std_ref*std_sim*corr_val)
 
@@ -518,10 +528,10 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     # Plot separately
     plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
     plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
+    exit()
 
 
     best_results = []
-
     for spi in SPI:
         model_metrics = []
         # for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
