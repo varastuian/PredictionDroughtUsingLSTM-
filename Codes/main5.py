@@ -12,6 +12,7 @@ from darts.models import (
     ARIMA, ExponentialSmoothing
 )
 from darts.dataprocessing.transformers import Scaler
+from darts.utils.timeseries_generation import datetime_attribute_timeseries
 
 # from matplotlib import gridspec
 
@@ -20,21 +21,6 @@ from sklearn.svm import SVR
 from scipy.stats import pearsonr
 import pywt
 
-# -----------------------------
-# Global Config
-# -----------------------------
-SEED = 42
-np.random.seed(SEED)
-window_size = 36
-horizon = 1
-num_epochs = 85
-input_folder = "./Data/testdata"
-output_folder = "./Results/r11"
-os.makedirs(output_folder, exist_ok=True)
-
-# SPI groups
-SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-# SPI = [ "SPI_12"]
 
 
 def taylor_diagram_panel(metrics_df, station, outfile):
@@ -108,9 +94,6 @@ def taylor_diagram_panel(metrics_df, station, outfile):
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
-# -----------------------------
-# Plot helpers
-# -----------------------------
 def plot_final_forecasts(station, results, outfile):
     fig, axes = plt.subplots(3, 2, figsize=(20, 14), sharex=True)
     axes = axes.flatten()
@@ -202,10 +185,104 @@ def plot_heatmaps(station, results, outfile):
 
 
 # -----------------------------
+# Global Config
+# -----------------------------
+SEED = 42
+np.random.seed(SEED)
+window_size = 36
+horizon = 12
+num_epochs = 190
+input_folder = "./Data/testdata"
+output_folder = "./Results/r17"
+os.makedirs(output_folder, exist_ok=True)
+
+# SPI groups
+SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+
+
+
+def forecast_covariate_to_2099(df, col, last_date):
+    """
+    df: pandas dataframe with columns ['ds', col]
+    last_date: pd.Timestamp of last observed date
+    returns: TimeSeries of forecasts starting from first future month (monthly freq)
+    """
+    # ensure monthly index
+    scaler = Scaler()
+    series = scaler.fit_transform(TimeSeries.from_dataframe(df[["ds", col]].dropna(), 'ds', col))
+    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+    if months_to_2099 <= 0:
+        return TimeSeries.from_dataframe(pd.DataFrame({"ds": [], col: []}), "ds", col)  # nothing to do
+
+
+    model = BlockRNNModel(
+            model='LSTM',
+            input_chunk_length=window_size,
+            output_chunk_length=horizon,
+            n_epochs=num_epochs,
+            dropout=0.2,
+            hidden_dim=64,
+            batch_size=16,
+            random_state=SEED
+        )
+
+
+    model.fit(series)
+    fc = model.predict(n=months_to_2099)
+    fc = scaler.inverse_transform(fc)
+    return fc 
+
+
+def build_future_covariates(df, last_date, window_size=36):
+    """
+    Build future covariates (temperature & precipitation) to 2099.
+    Returns: concatenated past window + future forecasts as a TimeSeries.
+    """
+    cov_df = df[["ds", "tm_m", "precip"]].dropna().reset_index(drop=True)
+    hist_ts = TimeSeries.from_dataframe(cov_df, "ds", ["tm_m", "precip"])
+
+    last_cov = hist_ts[-window_size:] if len(hist_ts) >= window_size else hist_ts
+
+    # Forecast each covariate
+    fc_tm = forecast_covariate_to_2099(cov_df, "tm_m", last_date)
+    fc_pr = forecast_covariate_to_2099(cov_df, "precip", last_date)
+
+    future_df = pd.DataFrame({
+        "ds": fc_tm.time_index,
+        "tm_m": fc_tm.values().flatten(),
+        "precip": fc_pr.values().flatten()
+    })
+    future_ts = TimeSeries.from_dataframe(future_df, "ds", ["tm_m", "precip"])
+
+    full_future_cov = last_cov.concatenate(future_ts)
+    return full_future_cov, hist_ts, future_ts
+
+def plot_covariate_forecasts(hist_ts, future_ts, covariate, color):
+    """
+    Plot historical vs forecasted covariate.
+    """
+    plt.figure(figsize=(14, 6))
+    plt.plot(hist_ts.time_index, hist_ts[covariate].values().flatten(), label=f"Historical {covariate}", color=color ,lw=0.5)
+    plt.plot(future_ts.time_index, future_ts[covariate].values().flatten(), label=f"Forecast {covariate}", color=color, lw=0.5)
+    plt.axvline(x=hist_ts.end_time(), color="red", linestyle=":", lw=1.5, label="Forecast Start")
+    plt.title(f"{covariate} — Historical vs Forecasted to 2099")
+    plt.xlabel("Date")
+    plt.ylabel(covariate)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    outfile = os.path.join(output_folder, f"covariate {covariate}_{station}.png") 
+    plt.savefig(outfile, dpi=300, bbox_inches="tight") 
+    plt.close()
+
+# -----------------------------
 # Model training & forecast
 # -----------------------------
-def train_and_forecast(df, value_col, model_name,covariates=None):
-    df_spi = df[["ds", spi,"tm_m", "precip"]].dropna().reset_index(drop=True)
+def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
+    """
+    
+    """
+    df_spi = df[["ds", value_col, "tm_m", "precip"]].dropna().reset_index(drop=True)
 
     use_scaler = model_name in ["SVR", "LSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
     scaler = cov_scaler=None
@@ -244,20 +321,22 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
                          n_epochs=num_epochs, dropout=0.2,
                          hidden_dim=64, batch_size=16, random_state=SEED)
     elif model_name == "WTLSTM":
-        coeffs = pywt.wavedec(df_spi[value_col].values, "db4", level=1)
-        threshold = np.std(coeffs[-1]) * np.sqrt(2*np.log(len(df_spi)))
-        coeffs_denoised = [pywt.threshold(c, threshold, mode='soft') if i > 0 else c for i, c in enumerate(coeffs)]
-        denoised = pywt.waverec(coeffs_denoised, wavelet='db4')
-        df_spi['spi_denoised'] = denoised[:len(df_spi)]
-        # series = TimeSeries.from_dataframe(df_spi, 'ds', 'spi_denoised')
+
+        for col in [value_col, "tm_m", "precip"]:
+            coeffs = pywt.wavedec(df_spi[col].values, wavelet='db4', level=1)
+            threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(df_spi)))
+            coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c
+                            for i, c in enumerate(coeffs)]
+            denoised = pywt.waverec(coeffs_denoised, wavelet="db4")
+            df_spi[f"{col}_denoised"] = denoised[:len(df_spi)]
         
 
 
         scaler = Scaler()
-        series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', "spi_denoised"))
+        series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', f"{value_col}_denoised"))
         
         cov_scaler = Scaler()
-        covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"]))
+        covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m_denoised", "precip_denoised"]))
     
 
         train, test = series.split_before(0.8)
@@ -292,12 +371,13 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
     else:
         model.fit(train, val_series=test, past_covariates=train_cov,val_past_covariates=test_cov)
 
-    n = len(test)
     try:
-        pred = model.predict(n, past_covariates=covariates)
+        pred = model.predict(len(test), series=train, past_covariates=covariates)
+        # pred = model.predict(len(test), series=train, past_covariates=train_cov, future_covariates=test_cov)
+
  
     except Exception:
-        pred = model.predict(n)
+        pred = model.predict(len(test))
 
 
     if use_scaler:
@@ -324,36 +404,76 @@ def train_and_forecast(df, value_col, model_name,covariates=None):
     else:
         model.fit(series, past_covariates=covariates)
 
-    last_date = df["ds"].max()
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
-    future_dates = pd.date_range(start=last_date + pd.DateOffset(months=1),
-                                    end="2099-12-01", freq='MS')
+    if future_covariates_ts is None:
+        last_date = df_spi["ds"].max()
+        months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+        future_dates = pd.date_range(start=last_date + pd.DateOffset(months=1),
+                                        end="2099-12-01", freq='MS')
 
 
-    last_covariates = covariates[-window_size:]
+        last_covariates = covariates[-window_size:]
+        if model_name == "WTLSTM":
+            future_cov = pd.DataFrame({
+                'ds': future_dates,
+                'tm_m_denoised': np.full(len(future_dates), df_spi['tm_m_denoised'].mean()),  # example: mean temperature
+                'precip_denoised': np.full(len(future_dates), df_spi['precip_denoised'].mean())  # example: mean precipitation
+            })
+            future_cov_ts = TimeSeries.from_dataframe(future_cov, 'ds', ['tm_m_denoised', 'precip_denoised'])
 
-    future_cov = pd.DataFrame({
-        'ds': future_dates,
-        'tm_m': np.full(len(future_dates), df['tm_m'].mean()),  # example: mean temperature
-        'precip': np.full(len(future_dates), df['precip'].mean())  # example: mean precipitation
-    })
-    future_cov_ts = TimeSeries.from_dataframe(future_cov, 'ds', ['tm_m', 'precip'])
+        else:
+            future_cov = pd.DataFrame({
+                'ds': future_dates,
+                'tm_m': np.full(len(future_dates), df_spi['tm_m'].mean()),  # example: mean temperature
+                'precip': np.full(len(future_dates), df_spi['precip'].mean())  # example: mean precipitation
+                })
+            future_cov_ts = TimeSeries.from_dataframe(future_cov, 'ds', ['tm_m', 'precip'])
+        full_future_cov = covariates[-window_size:].concatenate(future_cov_ts)
+
+    else:
+        full_future_cov = future_covariates_ts
 
     if use_scaler:
-        future_cov_ts = cov_scaler.transform(future_cov_ts)
+        full_future_cov = cov_scaler.transform(full_future_cov)
 
-    full_future_cov = last_covariates.concatenate(future_cov_ts)
+
+    months_to_2099 = len(full_future_cov) - min(window_size, len(covariates))  # future length
+
+
+
     
     if model_name in ["ARIMA", "ETS"]:
             forecast = model.predict(months_to_2099)
     else:
-        # forecast = model.predict(months_to_2099, future_covariates=covariates)
         forecast = model.predict(
         n=months_to_2099,
         series=series,
         past_covariates=full_future_cov
     )
-    # forecast_values = scaler.inverse_transform(forecast)
+
+        
+        
+
+    plt.figure(figsize=(16,6))
+    plt.plot(df['ds'], df[value_col], label="Historical", lw=0.6)
+    plt.plot(pred.time_index, p, label="Predicted", lw=0.4, color="red", linestyle="--")
+    plt.plot(forecast.time_index, forecast.values(), label="Forecast", lw=0.6, color="green")
+    plt.title(f"{value_col} {model_name} Forecast till 2099")
+    plt.xlabel("Date")
+    plt.ylabel(value_col)
+    plt.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
+    plt.legend()
+    plt.grid(True)
+    metrics_text = f"RMSE: {rmse_val:.3f}\nCorr: {corr_val:.3f}"
+    plt.gca().text(
+        0.02, 0.95, metrics_text,
+        transform=plt.gca().transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round,pad=0.3", edgecolor="black", facecolor="white", alpha=0.7)
+    )
+    outfile = os.path.join(output_folder, f"{station}_{value_col}_{model_name}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
 
     return {
         "rmse": rmse_val, "corr": corr_val, "std_ref": std_ref,
@@ -392,19 +512,28 @@ all_results = []
 for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
+    last_date = df['ds'].max()
+    future_covariates_ts, hist_ts, future_ts = build_future_covariates(df, last_date)
+
+    # Plot separately
+    plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
+    plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
+
 
     best_results = []
-
 
     for spi in SPI:
         model_metrics = []
         # for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
         for model_name in ["WTLSTM","ExtraTrees","RandomForest","SVR","LSTM"]:
-            print(f"## ** ______running :{station} {spi} {model_name}")
+            print(f"#______⬇️running :{station} {spi} {model_name}")
 
-            res = train_and_forecast(df, spi, model_name)
+            # res = train_and_forecast(df, spi, model_name)
+            res = train_and_forecast(df, spi, model_name, future_covariates_ts=future_covariates_ts)
+
             model_metrics.append(res)
             all_results.append({k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} | {"station": station})
+            print(f"#______end of :{station} {spi} {model_name}")
 
         # Pick best model (lowest RMSE)
         # best = min(model_metrics, key=lambda x: x["rmse"])
