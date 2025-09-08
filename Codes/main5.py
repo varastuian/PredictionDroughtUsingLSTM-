@@ -284,47 +284,57 @@ def plot_covariate_forecasts(hist_ts, future_ts, covariate, color):
     plt.savefig(outfile, dpi=300, bbox_inches="tight") 
     plt.close()
 
-# -----------------------------
-# Model training & forecast
-# -----------------------------
+def wavelet_denoise(series, wavelet="db4", level=1):
+    """
+    Denoise a 1D numpy array using wavelet thresholding.
+    Returns denoised array of the same length.
+    """
+    coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
+    # universal threshold based on noise estimate
+    threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(series)))
+    coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c
+                       for i, c in enumerate(coeffs)]
+    denoised = pywt.waverec(coeffs_denoised, wavelet=wavelet)
+    return denoised[:len(series)]
+
+
 def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
-    """
+
     
-    """
-    temp_col = "tm_m"
-    precip_col = "precip"
-    
-    df_spi = df[["ds", value_col, temp_col, precip_col]].dropna().reset_index(drop=True)
-    if model_name =="WTLSTM":
-        for col in [value_col, "tm_m", "precip"]:
-            coeffs = pywt.wavedec(df_spi[col].values, wavelet='db4', level=1)
-            threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(df_spi)))
-            coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c for i, c in enumerate(coeffs)]
-            denoised = pywt.waverec(coeffs_denoised, wavelet="db4")
-            df_spi[f"{col}_denoised"] = denoised[:len(df_spi)]
-        value_col = f"{value_col}_denoised"
-        value_col = f"{temp_col}_denoised"
-        value_col = f"{precip_col}_denoised"
+    df_spi = df[["ds", value_col, "tm_m", "precip"]].dropna().reset_index(drop=True)
 
     series_full = TimeSeries.from_dataframe(df_spi, 'ds', value_col)
     covariates_full = TimeSeries.from_dataframe(df_spi, 'ds', ["tm_m", "precip"])
 
     train, test = series_full.split_before(0.8)
     train_cov, test_cov = covariates_full.split_before(0.8)
+    testraw = test.copy()
+    if model_name == "WTLSTM":
+            # Convert to DataFrame
+            train_df = train.pd_dataframe().reset_index()
+            test_df = test.pd_dataframe().reset_index()
 
+            # Fit denoiser on train only
+            denoiser_val = wavelet_denoise(train_df[value_col].values)
+            denoiser_tm = wavelet_denoise(train_df["tm_m"].values)
+            denoiser_pr = wavelet_denoise(train_df["precip"].values)
 
-    
+            # Apply to train + test
+            train_df[f"{value_col}_denoised"] = denoiser_val(train_df[value_col].values)
+            test_df[f"{value_col}_denoised"] = denoiser_val(test_df[value_col].values)
 
+            train_df["tm_m_denoised"] = denoiser_tm(train_df["tm_m"].values)
+            test_df["tm_m_denoised"] = denoiser_tm(test_df["tm_m"].values)
 
-    scaler = Scaler()
-    series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', f"{value_col}_denoised"))
-    
-    cov_scaler = Scaler()
-    covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m_denoised", "precip_denoised"]))
+            train_df["precip_denoised"] = denoiser_pr(train_df["precip"].values)
+            test_df["precip_denoised"] = denoiser_pr(test_df["precip"].values)
 
+            # Rebuild TimeSeries
+            train = TimeSeries.from_dataframe(train_df, "ds", f"{value_col}_denoised")
+            test = TimeSeries.from_dataframe(test_df, "ds", f"{value_col}_denoised")
 
-    train, test = series.split_before(0.8)
-    train_cov, test_cov = covariates.split_before(0.8)
+            train_cov = TimeSeries.from_dataframe(train_df, "ds", ["tm_m_denoised", "precip_denoised"])
+            test_cov = TimeSeries.from_dataframe(test_df, "ds", ["tm_m_denoised", "precip_denoised"])
 
 
 
@@ -417,16 +427,18 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
     if use_scaler:
         pred = scaler.inverse_transform(pred)
         test = scaler.inverse_transform(test)
-        o = np.array(test.values().flatten())
+        o = testraw.values().flatten()
+
+        # o = np.array(test.values().flatten())
         p = np.array(pred.values().flatten())
     else:
-        o = test.values().flatten()
+        o = testraw.values().flatten()
         p = pred.values().flatten()
 
-    rmse_val = rmse(test, pred)
+    rmse_val = rmse(testraw, pred)
     corr_val = pearsonr(o, p)[0]
-    mae_val = mae(test, pred)
-    mape_val = mape(test, pred)
+    mae_val = mae(testraw, pred)
+    mape_val = mape(testraw, pred)
 
     std_ref = np.std(o, ddof=1)
     std_sim = np.std(p, ddof=1)
