@@ -191,7 +191,7 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 36
 horizon = 12
-num_epochs = 5
+num_epochs = 100
 input_folder = "./Data/testdata"
 output_folder = "./Results/r19"
 os.makedirs(output_folder, exist_ok=True)
@@ -215,7 +215,7 @@ def forecast_covariate_to_2099(df, col, last_date):
     df = df.reset_index()
     scaler = Scaler()
     series_scaled = scaler.fit_transform(TimeSeries.from_dataframe(df, 'ds', col))
-    months_to_2099 = (2029 - last_date.year) * 12 + (12 - last_date.month + 1)
+    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
     if months_to_2099 <= 0:
         return TimeSeries.from_dataframe(pd.DataFrame({"ds": [], col: []}), "ds", col)  # nothing to do
 
@@ -291,25 +291,68 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
     """
     
     """
-    df_spi = df[["ds", value_col, "tm_m", "precip"]].dropna().reset_index(drop=True)
+    temp_col = "tm_m"
+    precip_col = "precip"
+    
+    df_spi = df[["ds", value_col, temp_col, precip_col]].dropna().reset_index(drop=True)
+    if model_name =="WTLSTM":
+        for col in [value_col, "tm_m", "precip"]:
+            coeffs = pywt.wavedec(df_spi[col].values, wavelet='db4', level=1)
+            threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(df_spi)))
+            coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c for i, c in enumerate(coeffs)]
+            denoised = pywt.waverec(coeffs_denoised, wavelet="db4")
+            df_spi[f"{col}_denoised"] = denoised[:len(df_spi)]
+        value_col = f"{value_col}_denoised"
+        value_col = f"{temp_col}_denoised"
+        value_col = f"{precip_col}_denoised"
 
-    use_scaler = model_name in ["SVR", "LSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
-    scaler = cov_scaler=None
-    if use_scaler:
-        scaler = Scaler()
-        series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', value_col))
-        
-        cov_scaler = Scaler()
-        covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"]))
-    else:
-        scaler = None
-        series = TimeSeries.from_dataframe(df_spi, "ds", value_col)
-        covariates = TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"])
+    series_full = TimeSeries.from_dataframe(df_spi, 'ds', value_col)
+    covariates_full = TimeSeries.from_dataframe(df_spi, 'ds', ["tm_m", "precip"])
+
+    train, test = series_full.split_before(0.8)
+    train_cov, test_cov = covariates_full.split_before(0.8)
+
+
+    
+
+
+    scaler = Scaler()
+    series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', f"{value_col}_denoised"))
+    
+    cov_scaler = Scaler()
+    covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m_denoised", "precip_denoised"]))
+
 
     train, test = series.split_before(0.8)
     train_cov, test_cov = covariates.split_before(0.8)
-    o = test.values().flatten()  # observed values
-    std_ref = np.std(o, ddof=1)
+
+
+
+
+    use_scaler = model_name in ["SVR", "LSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
+    # scaler = cov_scaler=None
+    if use_scaler:
+        scaler = Scaler()
+        # series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', value_col))
+        train_scaled = scaler.fit_transform(train)
+        test_scaled = scaler.transform(test)
+        
+        cov_scaler = Scaler()
+        # covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"]))
+        train_cov_scaled = cov_scaler.fit_transform(train_cov)
+        test_cov_scaled = cov_scaler.transform(test_cov)
+        series = train_scaled  # for training calls
+        covariates = train_cov_scaled
+    else:
+        # scaler = None
+        # series = TimeSeries.from_dataframe(df_spi, "ds", value_col)
+        # covariates = TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"])
+
+        scaler = cov_scaler = None
+        series = train
+        covariates = train_cov
+
+
     # -----------------------------
     # Model selection
     # -----------------------------
@@ -331,28 +374,6 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
                          n_epochs=num_epochs, dropout=0.2,
                          hidden_dim=64, batch_size=16, random_state=SEED)
     elif model_name == "WTLSTM":
-
-        for col in [value_col, "tm_m", "precip"]:
-            coeffs = pywt.wavedec(df_spi[col].values, wavelet='db4', level=1)
-            threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(df_spi)))
-            coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c
-                            for i, c in enumerate(coeffs)]
-            denoised = pywt.waverec(coeffs_denoised, wavelet="db4")
-            df_spi[f"{col}_denoised"] = denoised[:len(df_spi)]
-        
-
-
-        scaler = Scaler()
-        series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', f"{value_col}_denoised"))
-        
-        cov_scaler = Scaler()
-        covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m_denoised", "precip_denoised"]))
-    
-
-        train, test = series.split_before(0.8)
-        train_cov, test_cov = covariates.split_before(0.8)
-
-
         model = BlockRNNModel(model='LSTM', input_chunk_length=window_size, output_chunk_length=horizon,
                          n_epochs=num_epochs, dropout=0.2,
                          hidden_dim=64, batch_size=16, random_state=SEED)
@@ -376,18 +397,21 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
     # -----------------------------
     # Train & evaluate
     # -----------------------------
+    
     if model_name in ["ARIMA", "ETS"]:
         model.fit(train)
     else:
-        model.fit(train, val_series=test, past_covariates=train_cov,val_past_covariates=test_cov)
+        model.fit(train, past_covariates=train_cov)
 
-    try:
-        pred = model.predict(len(test), series=train, past_covariates=covariates)
-        # pred = model.predict(len(test), series=train, past_covariates=train_cov, future_covariates=test_cov)
 
- 
-    except Exception:
-        pred = model.predict(len(test))
+    pred = model.predict(n=len(test), series=train, past_covariates=train_cov,future_covariates=test_cov)
+
+
+
+    print("train len:", len(train), "test len:", len(test))
+    print("train_cov len:", len(train_cov), "test_cov len:", len(test_cov))
+    print("train start/end:", train.start_time(), train.end_time())
+    print("train_cov start/end:", train_cov.start_time(), train_cov.end_time())
 
 
     if use_scaler:
@@ -401,10 +425,10 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
 
     rmse_val = rmse(test, pred)
     corr_val = pearsonr(o, p)[0]
-    # mae_val = mae(test, pred)
-    # mape_val = mape(test, pred)
+    mae_val = mae(test, pred)
+    mape_val = mape(test, pred)
 
-    # std_ref = np.std(o, ddof=1)
+    std_ref = np.std(o, ddof=1)
     std_sim = np.std(p, ddof=1)
     crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2*std_ref*std_sim*corr_val)
 
@@ -486,9 +510,9 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
     plt.close()
 
     return {
-        "rmse": rmse_val, "corr": corr_val, "std_ref": std_ref,
-        "std_model": std_sim, "crmse": crmse_val, "spi": spi,
-        "model": model_name, "scaler": scaler, "forecast": forecast, "pred": pred, "series": series
+        "spi": spi,"model": model_name,"std_ref": std_ref,
+        "std_model": std_sim,"rmse": rmse_val, "corr": corr_val,  "crmse": crmse_val, 
+         "scaler": scaler, "forecast": forecast, "pred": pred, "series": series
     }
 
 
@@ -528,7 +552,7 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     # Plot separately
     plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
     plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
-    exit()
+    # exit()
 
 
     best_results = []
@@ -542,7 +566,7 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
             res = train_and_forecast(df, spi, model_name, future_covariates_ts=future_covariates_ts)
 
             model_metrics.append(res)
-            all_results.append({k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} | {"station": station})
+            all_results.append({"station": station}| {k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} )
             print(f"#______end of :{station} {spi} {model_name}")
 
         # Pick best model (lowest RMSE)
