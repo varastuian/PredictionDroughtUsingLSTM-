@@ -191,7 +191,7 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 36
 horizon = 12
-num_epochs = 100
+num_epochs = 2
 input_folder = "./Data/testdata"
 output_folder = "./Results/r19"
 os.makedirs(output_folder, exist_ok=True)
@@ -311,35 +311,32 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
     testraw = test.copy()
     if model_name == "WTLSTM":
             # Convert to DataFrame
-            train_df = train.pd_dataframe().reset_index()
-            test_df = test.pd_dataframe().reset_index()
+            train_df = train.to_dataframe().reset_index()
+            test_df = test.to_dataframe().reset_index()
 
-            # Fit denoiser on train only
-            denoiser_val = wavelet_denoise(train_df[value_col].values)
-            denoiser_tm = wavelet_denoise(train_df["tm_m"].values)
-            denoiser_pr = wavelet_denoise(train_df["precip"].values)
+            traincov_df = train_cov.to_dataframe().reset_index()
+            testcov_df = test_cov.to_dataframe().reset_index()
 
-            # Apply to train + test
-            train_df[f"{value_col}_denoised"] = denoiser_val(train_df[value_col].values)
-            test_df[f"{value_col}_denoised"] = denoiser_val(test_df[value_col].values)
+            train_df[f"{value_col}_denoised"] = wavelet_denoise(train_df[value_col].values)
+            test_df[f"{value_col}_denoised"] = wavelet_denoise(test_df[value_col].values)
 
-            train_df["tm_m_denoised"] = denoiser_tm(train_df["tm_m"].values)
-            test_df["tm_m_denoised"] = denoiser_tm(test_df["tm_m"].values)
+            traincov_df["tm_m_denoised"] = wavelet_denoise(traincov_df["tm_m"].values)
+            testcov_df["tm_m_denoised"] = wavelet_denoise(testcov_df["tm_m"].values)
 
-            train_df["precip_denoised"] = denoiser_pr(train_df["precip"].values)
-            test_df["precip_denoised"] = denoiser_pr(test_df["precip"].values)
+            traincov_df["precip_denoised"] = wavelet_denoise(traincov_df["precip"].values)
+            testcov_df["precip_denoised"] = wavelet_denoise(testcov_df["precip"].values)
 
             # Rebuild TimeSeries
             train = TimeSeries.from_dataframe(train_df, "ds", f"{value_col}_denoised")
             test = TimeSeries.from_dataframe(test_df, "ds", f"{value_col}_denoised")
 
-            train_cov = TimeSeries.from_dataframe(train_df, "ds", ["tm_m_denoised", "precip_denoised"])
-            test_cov = TimeSeries.from_dataframe(test_df, "ds", ["tm_m_denoised", "precip_denoised"])
+            train_cov = TimeSeries.from_dataframe(traincov_df, "ds", ["tm_m_denoised", "precip_denoised"])
+            test_cov = TimeSeries.from_dataframe(testcov_df, "ds", ["tm_m_denoised", "precip_denoised"])
 
 
 
 
-    use_scaler = model_name in ["SVR", "LSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
+    use_scaler = model_name in ["SVR", "LSTM","WTLSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
     # scaler = cov_scaler=None
     if use_scaler:
         scaler = Scaler()
@@ -414,7 +411,8 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None):
         model.fit(train, past_covariates=train_cov)
 
 
-    pred = model.predict(n=len(test), series=train, past_covariates=train_cov,future_covariates=test_cov)
+    # pred = model.predict(n=len(test), series=train, past_covariates=train_cov,future_covariates=test_cov)
+    pred = model.predict(n=len(test), series=train, past_covariates=train_cov.concatenate(test_cov))
 
 
 
