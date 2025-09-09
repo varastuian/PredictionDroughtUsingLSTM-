@@ -191,7 +191,7 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 36
 horizon = 12
-num_epochs = 1
+num_epochs = 100
 input_folder = "./Data/testdata"
 output_folder = "./Results/r19"
 os.makedirs(output_folder, exist_ok=True)
@@ -346,7 +346,7 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
         cov_scaler = Scaler()
         # covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"]))
         train_cov = cov_scaler.fit_transform(train_cov)
-        covariates = cov_scaler.fit_transform(hist_covariates)
+        hist_covariates = cov_scaler.fit_transform(hist_covariates)
         # test_cov_scaled = cov_scaler.transform(test_cov)
         # train_cov_scaled = train_cov_scaled
     # else:
@@ -420,7 +420,7 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
 
     # pred = model.predict(n=len(test), series=train, past_covariates=train_cov,future_covariates=test_cov)
     # pred = model.predict(n=len(test), series=series, past_covariates=covariates.concatenate(test_cov))
-    pred = model.predict(n=len(test), series=train, past_covariates=covariates)
+    pred = model.predict(n=len(test), series=train, past_covariates=hist_covariates)
 
 
 
@@ -486,7 +486,7 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
                 })
             future_cov_ts = TimeSeries.from_dataframe(future_cov, 'ds', ['tm_m', 'precip'])
         # full_future_cov = covariates[-window_size:].concatenate(future_cov_ts)
-        full_future_cov = covariates.concatenate(future_cov_ts)
+        full_future_cov = hist_covariates.concatenate(future_cov_ts)
 
     else:
         full_future_cov = future_covariates_ts
