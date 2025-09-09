@@ -491,11 +491,13 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
     else:
         full_future_cov = future_covariates_ts
 
-    
+    last_date = df["ds"].max()
+    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)            
+    print('months_to_2099: ',months_to_2099) # 909
 
-
-    # months_to_2099 = len(full_future_cov) - window_size-130   # 2118
-    months_to_2099 = len(full_future_cov) - window_size
+    print('len(full_future_cov): ',len(full_future_cov)) # 1309
+    # months_to_2099 = len(full_future_cov) - window_size-190   #n=1083 must end at time step `2113-07-01
+    # months_to_2099 = len(full_future_cov) - window_size # n=1273 must end at time step `2129-05-01
     # months_to_2099 = len(full_future_cov)
 
 
@@ -576,26 +578,26 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
     last_date = df['ds'].max()
-    # future_covariates_ts, hist_ts, future_ts = build_future_covariates(df, last_date)
+    future_covariates_ts, hist_ts, future_ts = build_future_covariates(df, last_date)
 
     # # Plot separately
-    # plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
-    # plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
+    plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
+    plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
     # # exit()
-    # full_cov = hist_ts.concatenate(future_ts)
+    full_cov = hist_ts.concatenate(future_ts)
 
 
     best_results = []
     for spi in SPI:
         model_metrics = []
         # for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
-        # for model_name in ["WTLSTM","RandomForest","SVR","LSTM"]:
+        for model_name in ["WTLSTM","RandomForest","SVR","LSTM"]:
         # for model_name in ["RandomForest","SVR","LSTM"]:
-        for model_name in ["LSTM"]:
+        # for model_name in ["LSTM"]:
             print(f"#______⬇️running :{station} {spi} {model_name}")
 
-            res = train_and_forecast(df, spi, model_name)
-            # res = train_and_forecast(df, spi, model_name, future_covariates_ts=future_covariates_ts,full_cov_ts = full_cov)
+            # res = train_and_forecast(df, spi, model_name)
+            res = train_and_forecast(df, spi, model_name, future_covariates_ts=future_covariates_ts,full_cov_ts = full_cov)
 
             model_metrics.append(res)
             all_results.append({"station": station}| {k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} )
