@@ -191,7 +191,7 @@ SEED = 42
 np.random.seed(SEED)
 window_size = 36
 horizon = 12
-num_epochs = 90
+num_epochs = 1
 input_folder = "./Data/testdata"
 output_folder = "./Results/r19"
 os.makedirs(output_folder, exist_ok=True)
@@ -336,29 +336,28 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
 
 
     use_scaler = model_name in ["SVR", "LSTM","WTLSTM", "TFT", "NBEATS", "NHiTS", "TCN"]
-    # scaler = cov_scaler=None
+    scaler = cov_scaler=None
     if use_scaler:
         scaler = Scaler()
         # series = scaler.fit_transform(TimeSeries.from_dataframe(df_spi, 'ds', value_col))
-        train_scaled = scaler.fit_transform(train)
+        train = scaler.fit_transform(train)
         # test_scaled = scaler.transform(test)
         
         cov_scaler = Scaler()
         # covariates = cov_scaler.fit_transform(TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"]))
-        # train_cov_scaled = cov_scaler.fit_transform(train_cov)
-        train_cov_scaled = cov_scaler.fit_transform(hist_covariates)
+        train_cov = cov_scaler.fit_transform(train_cov)
+        covariates = cov_scaler.fit_transform(hist_covariates)
         # test_cov_scaled = cov_scaler.transform(test_cov)
-        series = train_scaled  # for training calls
-        covariates = train_cov_scaled
-    else:
-        # scaler = None
-        # series = TimeSeries.from_dataframe(df_spi, "ds", value_col)
-        # covariates = TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"])
+        # train_cov_scaled = train_cov_scaled
+    # else:
+    #     # scaler = None
+    #     # series = TimeSeries.from_dataframe(df_spi, "ds", value_col)
+    #     # covariates = TimeSeries.from_dataframe(df_spi, "ds", ["tm_m", "precip"])
 
-        scaler = cov_scaler = None
-        series = train
-        # covariates = train_cov
-        covariates = hist_covariates
+    #     scaler = cov_scaler = None
+    #     series = train
+    #     covariates = train_cov
+    #     # covariates = hist_covariates
 
 
     # -----------------------------
@@ -409,12 +408,19 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
     # if model_name in ["ARIMA", "ETS"]:
     #     model.fit(series)
     # else:
-    model.fit(series, past_covariates=covariates)
+    model.fit(train, past_covariates=train_cov)
 
+
+    # print("==DEBUG== model:", model_name)
+    # print(" train series:", series.start_time(), series.end_time(), "len", len(series))
+    # print(" train_cov:", covariates.start_time(), covariates.end_time(), "len", len(covariates))
+    # print(" train_cov_scaled:", train_cov_scaled.start_time(), train_cov_scaled.end_time(), "len", len(covariates))
+    # print(" test series:", test.start_time(), test.end_time(), "len", len(test))
+    # print(" test_cov:", test_cov.start_time(), test_cov.end_time(), "len", len(test_cov))
 
     # pred = model.predict(n=len(test), series=train, past_covariates=train_cov,future_covariates=test_cov)
     # pred = model.predict(n=len(test), series=series, past_covariates=covariates.concatenate(test_cov))
-    pred = model.predict(n=len(test), series=series, past_covariates=covariates)
+    pred = model.predict(n=len(test), series=train, past_covariates=covariates)
 
 
 
@@ -488,7 +494,8 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
     
 
 
-    months_to_2099 = len(full_future_cov) - window_size  # future length
+    # months_to_2099 = len(full_future_cov) - window_size-130   # 2118
+    months_to_2099 = len(full_future_cov) - window_size
     # months_to_2099 = len(full_future_cov)
 
 
@@ -569,24 +576,26 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     station = os.path.splitext(os.path.basename(file))[0]
     df = pd.read_csv(file, parse_dates=["ds"])
     last_date = df['ds'].max()
-    future_covariates_ts, hist_ts, future_ts = build_future_covariates(df, last_date)
+    # future_covariates_ts, hist_ts, future_ts = build_future_covariates(df, last_date)
 
-    # Plot separately
-    plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
-    plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
-    # exit()
-    full_cov = hist_ts.concatenate(future_ts)
+    # # Plot separately
+    # plot_covariate_forecasts(hist_ts, future_ts, "tm_m", color="blue")
+    # plot_covariate_forecasts(hist_ts, future_ts, "precip", color="green")
+    # # exit()
+    # full_cov = hist_ts.concatenate(future_ts)
 
 
     best_results = []
     for spi in SPI:
         model_metrics = []
         # for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
-        for model_name in ["WTLSTM","RandomForest","SVR","LSTM"]:
+        # for model_name in ["WTLSTM","RandomForest","SVR","LSTM"]:
+        # for model_name in ["RandomForest","SVR","LSTM"]:
+        for model_name in ["LSTM"]:
             print(f"#______⬇️running :{station} {spi} {model_name}")
 
-            # res = train_and_forecast(df, spi, model_name)
-            res = train_and_forecast(df, spi, model_name, future_covariates_ts=future_covariates_ts,full_cov_ts = full_cov)
+            res = train_and_forecast(df, spi, model_name)
+            # res = train_and_forecast(df, spi, model_name, future_covariates_ts=future_covariates_ts,full_cov_ts = full_cov)
 
             model_metrics.append(res)
             all_results.append({"station": station}| {k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]} )
