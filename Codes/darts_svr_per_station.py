@@ -16,8 +16,8 @@ from darts.metrics import rmse
 SEED = 42
 window_size = 36
 horizon = 1  # SVR works best for 1-step forecasts
-station_file = r"Data\python_spi\40726_SPI.csv"
-spi_column = 'SPI_24'
+station_file = r"Data\testdata\40712.csv"
+spi_column = 'SPI_12'
 
 # -----------------------------
 # Load SPI data

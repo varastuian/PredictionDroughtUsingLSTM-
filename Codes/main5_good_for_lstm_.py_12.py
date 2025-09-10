@@ -189,15 +189,15 @@ def plot_heatmaps(station, results, outfile):
 SEED = 42
 np.random.seed(SEED)
 window_size = 36
-horizon = 6
+horizon = 12
 num_epochs = 100
-input_folder = "./Data/maindata"
-output_folder = "./Results/r26"
+input_folder = "./Data/testdata"
+output_folder = "./Results/r22"
 os.makedirs(output_folder, exist_ok=True)
 
 # SPI groups
-SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-# SPI = [ "SPI_12"]
+# SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+SPI = [ "SPI_12"]
 
 
 
@@ -363,25 +363,19 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
     # -----------------------------
     # Model selection
     # -----------------------------
-    # if model_name == "ARIMA":
-    #     model = ARIMA()
-    # elif model_name == "ETS":
-    #     model = ExponentialSmoothing()
-    elif model_name == "ExtraTrees":
-        model = RegressionModel(ExtraTreesRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
-                                lags=window_size, output_chunk_length=horizon
-                                # ,lags_past_covariates=window_size
-                                )
-    if model_name == "RandomForest":
+    if model_name == "ARIMA":
+        model = ARIMA()
+    elif model_name == "ETS":
+        model = ExponentialSmoothing()
+    # elif model_name == "ExtraTrees":
+    #     model = RegressionModel(ExtraTreesRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
+    #                             lags=window_size, output_chunk_length=horizon,lags_past_covariates=window_size)
+    elif model_name == "RandomForest":
         model = RegressionModel(RandomForestRegressor(n_estimators=100, max_depth=10, random_state=SEED, n_jobs=-1),
-                                lags=window_size, output_chunk_length=horizon
-                                # ,lags_past_covariates=window_size
-                                )
+                                lags=window_size, output_chunk_length=horizon,lags_past_covariates=window_size)
     elif model_name == "SVR":
-        model = RegressionModel(SVR(kernel="rbf", C=1, gamma=0.01, epsilon=0.01),
-                                lags=window_size, output_chunk_length=horizon
-                                # ,lags_past_covariates=window_size
-                                )
+        model = RegressionModel(SVR(kernel="rbf", C=10, gamma="scale", epsilon=0.1),
+                                lags=window_size, output_chunk_length=horizon,lags_past_covariates=window_size)
     elif model_name == "LSTM":
         model = BlockRNNModel(model="LSTM", input_chunk_length=window_size, output_chunk_length=horizon,
                          n_epochs=num_epochs, dropout=0.2,
@@ -390,33 +384,31 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
         model = BlockRNNModel(model='LSTM', input_chunk_length=window_size, output_chunk_length=horizon,
                          n_epochs=num_epochs, dropout=0.2,
                          hidden_dim=64, batch_size=16, random_state=SEED)
-    # elif model_name == "TFT":
-    #     model = TFTModel(input_chunk_length=window_size, output_chunk_length=horizon,
-    #                      hidden_size=64, lstm_layers=1, dropout=0.2, batch_size=32, n_epochs=num_epochs,
-    #                      add_relative_index=True,
-    #                      add_encoders={"cyclic": {"future": ["month"]}, "datetime_attribute": {"future": ["year"]}},
-    #                      random_state=SEED)
-    # elif model_name == "NBEATS":
-    #     model = NBEATSModel(input_chunk_length=window_size, output_chunk_length=horizon,
-    #                         n_epochs=num_epochs, batch_size=32, random_state=SEED)
-    # elif model_name == "NHiTS":
-    #     model = NHiTSModel(input_chunk_length=window_size, output_chunk_length=horizon,
-    #                        n_epochs=num_epochs, batch_size=32, random_state=SEED)
-    # elif model_name == "TCN":
-    #     model = TCNModel(input_chunk_length=window_size, output_chunk_length=horizon,
-    #                      n_epochs=num_epochs, dropout=0.1, dilation_base=2,
-    #                      num_filters=32, kernel_size=3, random_state=SEED)
+    elif model_name == "TFT":
+        model = TFTModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                         hidden_size=64, lstm_layers=1, dropout=0.2, batch_size=32, n_epochs=num_epochs,
+                         add_relative_index=True,
+                         add_encoders={"cyclic": {"future": ["month"]}, "datetime_attribute": {"future": ["year"]}},
+                         random_state=SEED)
+    elif model_name == "NBEATS":
+        model = NBEATSModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                            n_epochs=num_epochs, batch_size=32, random_state=SEED)
+    elif model_name == "NHiTS":
+        model = NHiTSModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                           n_epochs=num_epochs, batch_size=32, random_state=SEED)
+    elif model_name == "TCN":
+        model = TCNModel(input_chunk_length=window_size, output_chunk_length=horizon,
+                         n_epochs=num_epochs, dropout=0.1, dilation_base=2,
+                         num_filters=32, kernel_size=3, random_state=SEED)
 
     # -----------------------------
     # Train & evaluate
     # -----------------------------
     
-    if model_name in ["ARIMA", "ETS"
-                      ,"SVR","RandomForest","ExtraTrees"
-                      ]:
-        model.fit(train)
-    else:
-        model.fit(train, past_covariates=train_cov)
+    # if model_name in ["ARIMA", "ETS"]:
+    #     model.fit(series)
+    # else:
+    model.fit(train, past_covariates=train_cov)
 
 
     # print("==DEBUG== model:", model_name)
@@ -425,15 +417,10 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
     # print(" train_cov_scaled:", train_cov_scaled.start_time(), train_cov_scaled.end_time(), "len", len(covariates))
     # print(" test series:", test.start_time(), test.end_time(), "len", len(test))
     # print(" test_cov:", test_cov.start_time(), test_cov.end_time(), "len", len(test_cov))
-    if model_name in ["ARIMA", "ETS"
-                      ,"SVR","RandomForest","ExtraTrees"
-                      ]:
-        pred = model.predict(n=len(test), series=train)
 
     # pred = model.predict(n=len(test), series=train, past_covariates=train_cov,future_covariates=test_cov)
     # pred = model.predict(n=len(test), series=series, past_covariates=covariates.concatenate(test_cov))
-    else:
-        pred = model.predict(n=len(test), series=train, past_covariates=hist_covariates)
+    pred = model.predict(n=len(test), series=train, past_covariates=hist_covariates)
 
 
 
@@ -471,14 +458,7 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
     #     hist_series = scaler.fit_transform(hist_series)
 
     # refit
-    if model_name in ["ARIMA", "ETS"
-                      ,"SVR","RandomForest","ExtraTrees"
-                      ]:
-
-        model.fit(hist_series)
-    
-    else:
-        model.fit(hist_series, past_covariates=hist_covariates)
+    model.fit(hist_series, past_covariates=hist_covariates)
 
     if future_covariates_ts is None:
         last_date = df_spi["ds"].max()
@@ -505,31 +485,23 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
             future_cov_ts = TimeSeries.from_dataframe(future_cov, 'ds', ['tm_m', 'precip'])
         # full_future_cov = covariates[-window_size:].concatenate(future_cov_ts)
         full_future_cov = hist_covariates.concatenate(future_cov_ts)
+
     else:
         full_future_cov = future_covariates_ts
 
     last_date = df["ds"].max()
     months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)            
    
-    if cov_scaler is not None:
-        full_future_cov = cov_scaler.fit_transform(full_future_cov)
+    full_future_cov = cov_scaler.fit_transform(full_future_cov)
 
-    if model_name in ["ARIMA", "ETS"
-                      ,"SVR","RandomForest","ExtraTrees"
-                      ]:
-        forecast = model.predict(
-        n=months_to_2099,
-        series=hist_series
-        )
-    else:
-        forecast = model.predict(
+    forecast = model.predict(
         n=months_to_2099,
         series=hist_series,
         past_covariates=full_future_cov
-        )
-    if scaler is not None:
-        forecast = scaler.inverse_transform(forecast)
-        hist_series = scaler.inverse_transform(hist_series)
+    )
+    
+    forecast = scaler.inverse_transform(forecast)
+    hist_series = scaler.inverse_transform(hist_series)
 
 
     plt.figure(figsize=(16,6))
@@ -558,7 +530,7 @@ def train_and_forecast(df, value_col, model_name,future_covariates_ts=None,full_
 
     return {
         "spi": spi,"model": model_name,"std_ref": std_ref,
-        "std_model": std_sim,"rmse": rmse_val, "corr": corr_val,  "crmse": crmse_val, "mae_val":mae_val,"mape_val":mape_val,"horizon":horizon,"window_size":window_size,"epoch":num_epochs,
+        "std_model": std_sim,"rmse": rmse_val, "corr": corr_val,  "crmse": crmse_val, 
          "scaler": scaler, "forecast": forecast, "pred": pred, "series": hist_series
     }
 
@@ -604,9 +576,9 @@ for file in glob.glob(os.path.join(input_folder, "*.csv")):
     for spi in SPI:
         model_metrics = []
         # for model_name in ["ExtraTrees","RandomForest","SVR","LSTM","WTLSTM","ARIMA","ETS","TFT","NBEATS","NHiTS","TCN"]:
-        for model_name in ["ExtraTrees","WTLSTM","RandomForest","SVR","LSTM"]:
+        # for model_name in ["WTLSTM","RandomForest","SVR","LSTM"]:
         # for model_name in ["RandomForest","SVR","LSTM"]:
-        # for model_name in ["SVR"]:
+        for model_name in ["LSTM"]:
             print(f"#______⬇️running :{station} {spi} {model_name}")
 
             # res = train_and_forecast(df, spi, model_name)
