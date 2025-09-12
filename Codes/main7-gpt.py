@@ -130,7 +130,7 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
 # -----------------------------
 # Core Forecasting Functions
 # -----------------------------
-def forecast_covariate_to_2099(df: pd.DataFrame, col: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
+def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     """
     Forecast a covariate (temperature or precipitation) to the year 2099
     
@@ -157,11 +157,11 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, last_date: datetime, 
         
         # Plot ACF
         plot_acf(series, period, max_lag=120)
-        outfile = os.path.join(config.output_folder, f"acf_plot_{col}.png")
+        outfile = os.path.join(config.output_folder, f"acf_plot_{station} {col}.png")
         plt.savefig(outfile, dpi=300, bbox_inches="tight")
         plt.close()
 
-        window_size = int(period) if period > 0 else 12  # Default to 12 months if no seasonality detected
+        window_size = int(period) if period > 36 else 36 
 
         series_scaled = scaler.fit_transform(series)
 
@@ -220,7 +220,7 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, last_date: datetime, 
         logger.error(f"Error forecasting {col}: {e}")
         raise
 
-def build_future_covariates(df: pd.DataFrame, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
+def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
     """
     Build future covariates for forecasting
     
@@ -234,8 +234,8 @@ def build_future_covariates(df: pd.DataFrame, last_date: datetime, config: Forec
     """
     try:
         # Forecast temperature and precipitation
-        hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", last_date, config)
-        hist_pr, fc_pr = forecast_covariate_to_2099(df, "precip", last_date, config)
+        hist_tm, fc_tm = forecast_covariate_to_2099(df,station, "tm_m", last_date, config)
+        hist_pr, fc_pr = forecast_covariate_to_2099(df, station,"precip", last_date, config)
 
         # Combine historical covariates
         hist_ts = hist_tm.stack(hist_pr)
@@ -435,7 +435,7 @@ def train_and_forecast(df: pd.DataFrame, value_col: str,station:str, model_name:
         plt.savefig(outfile, dpi=300, bbox_inches="tight")
         plt.close()
 
-        window_size = int(period) if period > 36 else 12
+        window_size = int(period) if period > 36 else 36
 
         # Split data
         train, test = hist_series.split_before(config.train_test_split)
@@ -810,7 +810,7 @@ def main():
             last_date = df['ds'].max()
             
             # Build future covariates
-            future_covariates_ts, hist_ts, future_ts = build_future_covariates(df, last_date, config)
+            future_covariates_ts, hist_ts, future_ts = build_future_covariates(df,station ,last_date, config)
             plot_covariate_forecasts(hist_ts, future_ts, "tm_m", station, config, color="blue")
             plot_covariate_forecasts(hist_ts, future_ts, "precip", station, config, color="green")
             full_cov = hist_ts.concatenate(future_ts)
