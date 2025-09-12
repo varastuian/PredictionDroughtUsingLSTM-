@@ -43,7 +43,7 @@ class ForecastConfig:
         self.horizon = 3
         self.num_epochs = 100
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r37"
+        self.output_folder = "./Results/r38"
         # self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.SPI = ["SPI_1"]
         # self.models_to_test = ["ExtraTrees", "WTLSTM", "RandomForest", "SVR", "LSTM"]
@@ -161,7 +161,7 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
         plt.savefig(outfile, dpi=300, bbox_inches="tight")
         plt.close()
 
-        window_size = int(period) if period > 36 else 36 
+        window_size = int(period) if period > 0 else 12 
 
         series_scaled = scaler.fit_transform(series)
 
