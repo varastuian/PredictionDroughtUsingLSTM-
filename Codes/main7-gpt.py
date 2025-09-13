@@ -40,14 +40,14 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon = 3
-        self.num_epochs = 100
+        self.horizon = 1
+        self.num_epochs = 300
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r38"
-        # self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.SPI = ["SPI_1"]
-        # self.models_to_test = ["ExtraTrees", "WTLSTM", "RandomForest", "SVR", "LSTM"]
-        self.models_to_test = [ "ExtraTrees"]
+        self.output_folder = "./Results/r40"
+        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+        # self.SPI = ["SPI_1"]
+        self.models_to_test = ["ExtraTrees", "WTLSTM", "RandomForest", "SVR", "LSTM"]
+        # self.models_to_test = [ "ExtraTrees"]
         self.wavelet = "db4"
         self.wavelet_level = 1
         self.train_test_split = 0.8
@@ -70,6 +70,19 @@ def setup_plotting():
     plt.rcParams['figure.figsize'] = (14, 8)
     plt.rcParams['font.size'] = 12
     plt.rcParams['axes.grid'] = True
+
+def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
+    """
+    Build cyclic covariates (month, year, scaled year) for a given time index
+    """
+    month_cov = datetime_attribute_timeseries(time_index, "month", one_hot=True)
+    year_cov = datetime_attribute_timeseries(time_index, "year")
+    
+    year_scaled = (year_cov.values() - year_cov.values().min()) / (year_cov.values().max() - year_cov.values().min())
+    year_scaled_ts = TimeSeries.from_times_and_values(time_index, year_scaled)
+    
+    cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
+    return cyc_cov
 
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
@@ -165,10 +178,14 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
 
         series_scaled = scaler.fit_transform(series)
 
-        # Build cyclic covariates
-        month_cov = datetime_attribute_timeseries(series.time_index, "month", one_hot=True)
-        year_cov = datetime_attribute_timeseries(series.time_index, "year")
-        cyc_cov = month_cov.stack(year_cov)
+        # # Build cyclic covariates
+        # month_cov = datetime_attribute_timeseries(series.time_index, "month", one_hot=True)
+        # year_cov = datetime_attribute_timeseries(series.time_index, "year")
+        # # cyc_cov = month_cov.stack(year_cov)
+        # year_scaled = (year_cov.values() - year_cov.values().min()) / (year_cov.values().max() - year_cov.values().min())
+        # year_scaled_ts = TimeSeries.from_times_and_values(series.time_index, year_scaled)
+        # cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
+        cyc_cov = build_cyclic_covariates(series.time_index)
         cov_scaler = Scaler()
         cyc_cov = cov_scaler.fit_transform(cyc_cov)
 
@@ -201,24 +218,68 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
             periods=len(series) + months_to_2099, 
             freq="MS"
         )
-        month_future = datetime_attribute_timeseries(future_time_idx, "month", one_hot=True)
-        year_future = datetime_attribute_timeseries(future_time_idx, "year")
-        cyc_cov_full = month_future.stack(year_future)
-        cyc_cov_full = cov_scaler.transform(cyc_cov_full)
+        # month_future = datetime_attribute_timeseries(future_time_idx, "month", one_hot=True)
+        # year_future = datetime_attribute_timeseries(future_time_idx, "year")
+        # cyc_cov_full = month_future.stack(year_future)
+        # cyc_cov_full = cov_scaler.transform(cyc_cov_full)
 
-        # Predict future
-        fc_scaled = model.predict(
-            n=months_to_2099, 
-            series=series_scaled, 
-            past_covariates=cyc_cov_full
-        )
+        # # Predict future
+        # fc_scaled = model.predict(
+        #     n=months_to_2099, 
+        #     series=series_scaled, 
+        #     past_covariates=cyc_cov_full
+        # )
+        # fc = scaler.inverse_transform(fc_scaled)
+
+        # Scaled year for future
+        # year_scaled_future = (year_future.values() - year_future.values().min()) / (year_future.values().max() - year_future.values().min())
+        # year_scaled_future_ts = TimeSeries.from_times_and_values(future_time_idx, year_scaled_future)
+
+        # cyc_cov_future = month_future.stack(year_future).stack(year_scaled_future_ts)
+
+        cyc_cov_future = build_cyclic_covariates(future_time_idx)
+
+        cyc_cov_future_scaled = cov_scaler.transform(cyc_cov_future)
+
+        # Predict
+        fc_scaled = model.predict(n=months_to_2099, series=series_scaled, past_covariates=cyc_cov_future_scaled)
         fc = scaler.inverse_transform(fc_scaled)
+
 
         return series, fc
 
     except Exception as e:
         logger.error(f"Error forecasting {col}: {e}")
         raise
+
+
+def forecast_precip_to_2099(df: pd.DataFrame, station: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
+    df = df.copy()
+    df["ds"] = pd.to_datetime(df["ds"])
+    df = df.set_index("ds").asfreq("MS").reset_index()
+    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month)
+
+    # Stage 1: Wet/Dry
+    df['wet_day'] = (df['precip'] > 0).astype(int)
+    hist_wet, fc_wet = forecast_covariate_to_2099(df, station, "wet_day", last_date, config)
+
+    # Stage 2: Positive precipitation (log1p)
+    df['log_precip'] = np.log1p(df['precip'])  # keep all months
+    hist_log, fc_log = forecast_covariate_to_2099(df, station, "log_precip", last_date, config)
+
+    # Convert back
+    fc_intensity = TimeSeries.from_times_and_values(fc_log.time_index, np.expm1(fc_log.values().flatten()))
+
+    # Align time indices
+    future_idx = fc_wet.time_index
+    wet_flag = (fc_wet.values().flatten() > 0.5).astype(float)
+    fc_precip_final = TimeSeries.from_times_and_values(future_idx, wet_flag * fc_intensity.values().flatten())
+
+    hist_precip = TimeSeries.from_dataframe(df, "ds", ["precip"])
+    return hist_precip, fc_precip_final
+
+
+
 
 def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
     """
@@ -235,7 +296,8 @@ def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, confi
     try:
         # Forecast temperature and precipitation
         hist_tm, fc_tm = forecast_covariate_to_2099(df,station, "tm_m", last_date, config)
-        hist_pr, fc_pr = forecast_covariate_to_2099(df, station,"precip", last_date, config)
+        # hist_pr, fc_pr = forecast_covariate_to_2099(df, station,"precip", last_date, config)
+        hist_pr, fc_pr = forecast_precip_to_2099(df, station, last_date, config)
 
         # Combine historical covariates
         hist_ts = hist_tm.stack(hist_pr)
@@ -420,9 +482,14 @@ def train_and_forecast(df: pd.DataFrame, value_col: str,station:str, model_name:
         hist_covariates = TimeSeries.from_dataframe(df_spi, 'ds', ["tm_m", "precip"])
 
         # Build cyclic covariates
-        month_cov = datetime_attribute_timeseries(hist_series.time_index, "month", one_hot=True)
-        year_cov = datetime_attribute_timeseries(hist_series.time_index, "year")
-        cyc_cov = month_cov.stack(year_cov)
+        # month_cov = datetime_attribute_timeseries(hist_series.time_index, "month", one_hot=True)
+        # year_cov = datetime_attribute_timeseries(hist_series.time_index, "year")
+        # year_scaled = (year_cov.values() - year_cov.values().min()) / (year_cov.values().max() - year_cov.values().min())
+        # year_scaled_ts = TimeSeries.from_times_and_values(hist_series.time_index, year_scaled)
+        # cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
+        # cyc_cov = month_cov.stack(year_cov)
+        cyc_cov = build_cyclic_covariates(hist_series.time_index)
+
         hist_covariates = hist_covariates.stack(cyc_cov)
 
         # Check seasonality
@@ -514,13 +581,14 @@ def train_and_forecast(df: pd.DataFrame, value_col: str,station:str, model_name:
                 periods=len(full_future_cov), 
                 freq="MS"
             )
-            month_future = datetime_attribute_timeseries(future_time_idx, "month", one_hot=True)
-            year_future = datetime_attribute_timeseries(future_time_idx, "year")
-            cyc_cov_full = month_future.stack(year_future)
+            # month_future = datetime_attribute_timeseries(future_time_idx, "month", one_hot=True)
+            # year_future = datetime_attribute_timeseries(future_time_idx, "year")
+            # cyc_cov_full = month_future.stack(year_future)
             
-            # Combine with existing covariates
-            full_future_cov_combined = full_future_cov.stack(cyc_cov_full)
-            
+            # # Combine with existing covariates
+            # full_future_cov_combined = full_future_cov.stack(cyc_cov_full)
+            full_future_cov_combined = build_cyclic_covariates(future_time_idx)
+
             if cov_scaler is not None:
                 full_future_cov_combined = cov_scaler.transform(full_future_cov_combined)
 
@@ -796,8 +864,8 @@ def main():
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        if station !="40700":
-            continue
+        # if station !="40700":
+        #     continue
         logger.info(f"Processing station: {station}")
         
         try:
