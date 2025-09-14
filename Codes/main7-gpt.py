@@ -131,8 +131,6 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
 def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     
     df = df.copy()
-    df["ds"] = pd.to_datetime(df["ds"])
-    df = df.set_index("ds").asfreq("MS").reset_index()
 
     scaler = Scaler()
     series = TimeSeries.from_dataframe(df, 'ds', col)
@@ -204,9 +202,6 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
 
 def forecast_precip_to_2099(df: pd.DataFrame, station: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     df = df.copy()
-    df["ds"] = pd.to_datetime(df["ds"])
-    df = df.set_index("ds").asfreq("MS").reset_index()
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month)
 
     # Stage 1: Wet/Dry
     df['wet_day'] = (df['precip'] > 0).astype(int)
@@ -746,7 +741,8 @@ def main():
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
-        
+        df["ds"] = pd.to_datetime(df["ds"])
+        df = df.set_index("ds").asfreq("MS").reset_index()
             
         last_date = df['ds'].max()
         
