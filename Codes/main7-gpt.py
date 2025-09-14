@@ -6,14 +6,10 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Any
 from datetime import datetime
 import seaborn as sns
-
-# Machine learning imports
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from scipy.stats import pearsonr
-
-# Time series analysis imports
 from darts import TimeSeries
 from darts.models import BlockRNNModel, RegressionModel
 # from darts.metrics import mae, mape, rmse
@@ -21,10 +17,7 @@ from darts.utils.timeseries_generation import datetime_attribute_timeseries
 from darts.dataprocessing.transformers import Scaler
 from darts.utils.likelihood_models import GaussianLikelihood
 from darts.utils.statistics import check_seasonality , plot_acf
-
-# Wavelet transform
 import pywt
-
 
 class ForecastConfig:
     """Configuration class for forecasting parameters"""
@@ -33,13 +26,9 @@ class ForecastConfig:
         self.horizon = 1
         self.num_epochs = 300
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r1"
-        # self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.SPI = ["SPI_12"]
-        self.models_to_test = ["ExtraTrees", "WTLSTM", "RandomForest", "SVR", "LSTM"]
-        # self.models_to_test = [ "ExtraTrees"]
-        self.wavelet = "db4"
-        self.wavelet_level = 1
+        self.output_folder = "./Results/r3"
+        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 128
         self.lstm_batch_size = 16
@@ -52,12 +41,6 @@ class ForecastConfig:
         # Set random seed for reproducibility
         np.random.seed(self.SEED)
 
-
-def setup_plotting():
-    """Configure matplotlib settings"""
-    plt.rcParams['figure.figsize'] = (14, 8)
-    plt.rcParams['font.size'] = 12
-    plt.rcParams['axes.grid'] = True
 
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     """
@@ -74,22 +57,11 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     return cyc_cov
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
-    """
-    Denoise a 1D numpy array using wavelet thresholding
     
-    Args:
-        series: 1D array to denoise
-        wavelet: Wavelet type to use
-        level: Decomposition level
-        
-    Returns:
-        Denoised array of the same length
-    """
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
     # Universal threshold based on noise estimate
     threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(series)))
-    coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c
-                       for i, c in enumerate(coeffs)]
+    coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c for i, c in enumerate(coeffs)]
     denoised = pywt.waverec(coeffs_denoised, wavelet=wavelet)
     return denoised[:len(series)]
 
@@ -128,7 +100,7 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
         "mape": mape_val
     }
 
-def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
+def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     
     df = df.copy()
 
@@ -136,23 +108,15 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
     series = TimeSeries.from_dataframe(df, 'ds', col)
 
     # Check seasonality
-    is_seasonal, period = check_seasonality(series, max_lag=120)
+    is_seasonal, period = check_seasonality(series, max_lag=150)
     print(f"Seasonality check: {is_seasonal}, period: {period}")
     
     # Plot ACF
-    plot_acf(series, period, max_lag=120)
-    # Add vertical line for period
-    plt.axvline(x=period, color="red", linestyle="--", label=f"Period = {period}")
-
-    # Annotate inside the plot
+    plot_acf(series, period, max_lag=150)
     plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
-
-    # Add title
     plt.title(f"ACF Plot (Period = {period})")
-
-    # Add legend
-    plt.legend()
-    outfile = os.path.join(config.output_folder, f"acf_plot_{station} {col}.png")
+    # plt.legend()
+    outfile = os.path.join(config.output_folder, f"acf_plot_{config.station} {col}.png")
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -179,13 +143,10 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
 
     model.fit(series_scaled, past_covariates=cyc_cov)
 
-    # Calculate months to forecast until 2099
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month)
-
     # Create future covariates for prediction
     future_time_idx = pd.date_range(
         start=series.time_index[0], 
-        periods=len(series) + months_to_2099, 
+        periods=len(series) + config.months_to_2099, 
         freq="MS"
     )
 
@@ -194,22 +155,22 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
     cyc_cov_future_scaled = cov_scaler.transform(cyc_cov_future)
 
     # Predict
-    fc_scaled = model.predict(n=months_to_2099, series=series_scaled, past_covariates=cyc_cov_future_scaled)
+    fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled, past_covariates=cyc_cov_future_scaled)
     fc = scaler.inverse_transform(fc_scaled)
 
 
     return series, fc
 
-def forecast_precip_to_2099(df: pd.DataFrame, station: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
+def forecast_precip_to_2099(df: pd.DataFrame, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     df = df.copy()
 
     # Stage 1: Wet/Dry
     df['wet_day'] = (df['precip'] > 0).astype(int)
-    hist_wet, fc_wet = forecast_covariate_to_2099(df, station, "wet_day", last_date, config)
+    hist_wet, fc_wet = forecast_covariate_to_2099(df,  "wet_day", config)
 
     # Stage 2: Positive precipitation (log1p)
     df['log_precip'] = np.log1p(df['precip'])  # keep all months
-    hist_log, fc_log = forecast_covariate_to_2099(df, station, "log_precip", last_date, config)
+    hist_log, fc_log = forecast_covariate_to_2099(df, "log_precip", config)
 
     # Convert back
     fc_intensity = TimeSeries.from_times_and_values(fc_log.time_index, np.expm1(fc_log.values().flatten()))
@@ -222,15 +183,19 @@ def forecast_precip_to_2099(df: pd.DataFrame, station: str, last_date: datetime,
     hist_precip = TimeSeries.from_dataframe(df, "ds", ["precip"])
     return hist_precip, fc_precip_final
 
-def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
+def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
 
     # Forecast temperature and precipitation
-    hist_tm, fc_tm = forecast_covariate_to_2099(df,station, "tm_m", last_date, config)
     # hist_pr, fc_pr = forecast_covariate_to_2099(df, station,"precip", last_date, config)
-    hist_pr, fc_pr = forecast_precip_to_2099(df, station, last_date, config)
+    hist_pr, fc_pr = forecast_precip_to_2099(df, config)
+    plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
 
+    hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", config)
+    plot_covariate_forecasts(hist_tm, fc_tm, "tm_m", config, color="blue")
+        
+        
     # Combine historical covariates
-    hist_ts = hist_tm.stack(hist_pr)
+    hist_cov = hist_tm.stack(hist_pr)
 
     # Create future covariates DataFrame
     future_df = pd.DataFrame({
@@ -238,89 +203,80 @@ def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, confi
         "tm_m": fc_tm.values().flatten(),
         "precip": fc_pr.values().flatten()
     })
-    future_ts = TimeSeries.from_dataframe(future_df, "ds", ["tm_m", "precip"])
+    future_cov = TimeSeries.from_dataframe(future_df, "ds", ["tm_m", "precip"])
 
     # Combine historical and future covariates
-    full_future_cov = hist_ts.concatenate(future_ts)
+    full_cov = hist_cov.concatenate(future_cov)
+    cyc_cov = build_cyclic_covariates(full_cov.time_index)
 
-    return full_future_cov, hist_ts, future_ts
 
-def plot_covariate_forecasts(hist_ts: TimeSeries, future_ts: TimeSeries, covariate: str, 
-                            station: str, config: ForecastConfig, color: str = "blue"):
+    hist_cov = hist_cov.stack(cyc_cov.split_before(future_cov.start_time())[0])
+    full_cov = full_cov.stack(cyc_cov)
+
+
+    return full_cov, hist_cov
+
+def plot_covariate_forecasts(hist_ts, future_ts, covariate: str, config: ForecastConfig, color: str = "blue"):
 
     plt.figure(figsize=(14, 6))
-    plt.plot(hist_ts.time_index, hist_ts[covariate].values().flatten(), 
-            label=f"Historical {covariate}", color=color, lw=0.5)
-    plt.plot(future_ts.time_index, future_ts[covariate].values().flatten(), 
-            label=f"Forecast {covariate}", color=color, lw=0.5)
+    plt.plot(hist_ts.time_index, hist_ts.values().flatten(), label=f"Historical {covariate}", color=color, lw=0.5)
+    plt.plot(future_ts.time_index, future_ts.values().flatten(), label=f"Forecast {covariate}", color=color, lw=0.5)
     plt.axvline(x=hist_ts.end_time(), color="red", linestyle=":", lw=1.5, label="Forecast Start")
-    plt.title(f"{station} - {covariate} - Historical vs Forecasted to 2099")
+    plt.title(f"{config.station} - {covariate} - Historical vs Forecasted to 2099")
     plt.xlabel("Date")
     plt.ylabel(covariate)
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    outfile = os.path.join(config.output_folder, f"covariate_{covariate}_{station}.png") 
+    outfile = os.path.join(config.output_folder, f"covariate_{covariate}_{config.station}.png") 
     plt.savefig(outfile, dpi=300, bbox_inches="tight") 
     plt.close()
 
-def prepare_wavelet_data(train_series: TimeSeries, test_series: TimeSeries, 
-                        train_cov: TimeSeries, test_cov: TimeSeries, 
-                        value_col: str) -> Tuple[TimeSeries, TimeSeries, TimeSeries, TimeSeries]:
-    """
-    Prepare wavelet-denoised data for WTLSTM model
-    
-    Args:
-        train_series: Training time series
-        test_series: Testing time series
-        train_cov: Training covariates
-        test_cov: Testing covariates
-        value_col: Value column name
-        
-    Returns:
-        Tuple of denoised training series, testing series, training covariates, and testing covariates
-    """
+def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_cov,full_cov):
+   
     # Convert to DataFrames
-    train_df = train_series.to_dataframe().reset_index()
-    test_df = test_series.to_dataframe().reset_index()
+    train_df = train.to_dataframe().reset_index()
+    test_df = test.to_dataframe().reset_index()
+    hist_df = hist.to_dataframe().reset_index()
+
     traincov_df = train_cov.to_dataframe().reset_index()
     testcov_df = test_cov.to_dataframe().reset_index()
+    hist_cov_df = hist_cov.to_dataframe().reset_index()
+    full_cov_df = full_cov.to_dataframe().reset_index()
 
     # Apply wavelet denoising
     train_df[f"{value_col}_denoised"] = wavelet_denoise(train_df[value_col].values)
     test_df[f"{value_col}_denoised"] = wavelet_denoise(test_df[value_col].values)
+    hist_df[f"{value_col}_denoised"] = wavelet_denoise(hist_df[value_col].values)
+
     traincov_df["tm_m_denoised"] = wavelet_denoise(traincov_df["tm_m"].values)
     testcov_df["tm_m_denoised"] = wavelet_denoise(testcov_df["tm_m"].values)
+    hist_cov_df["tm_m_denoised"] = wavelet_denoise(hist_cov_df["tm_m"].values)
+    full_cov_df["tm_m_denoised"] = wavelet_denoise(full_cov_df["tm_m"].values)
+
     traincov_df["precip_denoised"] = wavelet_denoise(traincov_df["precip"].values)
     testcov_df["precip_denoised"] = wavelet_denoise(testcov_df["precip"].values)
+    hist_cov_df["precip_denoised"] = wavelet_denoise(hist_cov_df["precip"].values)
+    full_cov_df["precip_denoised"] = wavelet_denoise(full_cov_df["precip"].values)
 
     # Get cyclic columns
-    cyclic_cols = [col for col in traincov_df.columns if "month" in col or "year" in col]
+    cyclic_cols = [col for col in full_cov_df.columns if "month" in col or "year" in col]
 
     # Rebuild TimeSeries objects
     train_denoised = TimeSeries.from_dataframe(train_df, "ds", f"{value_col}_denoised")
     test_denoised = TimeSeries.from_dataframe(test_df, "ds", f"{value_col}_denoised")
-    train_cov_denoised = TimeSeries.from_dataframe(
-        traincov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols
-    )
-    test_cov_denoised = TimeSeries.from_dataframe(
-        testcov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols
-    )
+    hist_denoised = TimeSeries.from_dataframe(hist_df, "ds", f"{value_col}_denoised")
 
-    return train_denoised, test_denoised, train_cov_denoised, test_cov_denoised
+
+    train_cov_denoised = TimeSeries.from_dataframe(traincov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
+    test_cov_denoised = TimeSeries.from_dataframe(testcov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
+    hist_cov_denoised = TimeSeries.from_dataframe(hist_cov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
+    full_cov_denoised = TimeSeries.from_dataframe(full_cov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
+
+    return train_denoised, test_denoised,hist_denoised, train_cov_denoised, test_cov_denoised,hist_cov_denoised,full_cov_denoised
 
 def create_model(model_name: str, window_size: int, config: ForecastConfig):
-    """
-    Create a forecasting model based on the specified type
     
-    Args:
-        model_name: Type of model to create
-        window_size: Input window size
-        config: Configuration object
-        
-    Returns:
-        Initialized model
-    """
     if model_name == "ExtraTrees":
         return RegressionModel(
             ExtraTreesRegressor(n_estimators=100, max_depth=10, random_state=config.SEED, n_jobs=-1),
@@ -349,8 +305,8 @@ def create_model(model_name: str, window_size: int, config: ForecastConfig):
             n_rnn_layers=config.lstm_layers,
             hidden_dim=config.lstm_hidden_dim, 
             batch_size=config.lstm_batch_size, 
-            random_state=config.SEED,
-            likelihood=GaussianLikelihood()
+            random_state=config.SEED
+            # ,likelihood=GaussianLikelihood()
         )
     elif model_name == "WTLSTM":
         return BlockRNNModel(
@@ -362,170 +318,12 @@ def create_model(model_name: str, window_size: int, config: ForecastConfig):
             n_rnn_layers=config.lstm_layers,
             hidden_dim=config.lstm_hidden_dim, 
             batch_size=config.lstm_batch_size, 
-            random_state=config.SEED,
-            likelihood=GaussianLikelihood()
+            random_state=config.SEED
+            # ,likelihood=GaussianLikelihood()
         )
     else:
         raise ValueError(f"Unknown model type: {model_name}")
-
-def train_and_forecast(df: pd.DataFrame, value_col: str,station:str, model_name: str, 
-                      full_future_cov: TimeSeries, config: ForecastConfig) -> Dict[str, Any]:
-    
-    # Prepare data
-    df_spi = df[["ds", value_col, "tm_m", "precip"]].dropna().reset_index(drop=True)
-    
-   
-
-    hist_series = TimeSeries.from_dataframe(df_spi, 'ds', value_col)
-    hist_covariates = TimeSeries.from_dataframe(df_spi, 'ds', ["tm_m", "precip"])
-
-    
-    cyc_cov = build_cyclic_covariates(hist_series.time_index)
-
-    hist_covariates = hist_covariates.stack(cyc_cov)
-
-    # Check seasonality
-    is_seasonal, period = check_seasonality(hist_series, max_lag=120)
-    print(f"Seasonality check for {value_col}: {is_seasonal}, period: {period}")
-    
-    # Plot ACF
-    plot_acf(hist_series, period, max_lag=120)
-    outfile = os.path.join(config.output_folder, f"acf_plot_{station} {value_col}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    window_size = int(period) if period > 36 else 36
-
-    # Split data
-    train, test = hist_series.split_before(config.train_test_split)
-    train_cov, test_cov = hist_covariates.split_before(config.train_test_split)
-    test_raw = test.copy()
-
-    # Handle wavelet denoising for WTLSTM model
-    if model_name == "WTLSTM":
-        train, test, train_cov, test_cov = prepare_wavelet_data(
-            train, test, train_cov, test_cov, value_col
-        )
-
-    # Scale data if needed
-    use_scaler = model_name in ["SVR", "LSTM", "WTLSTM"]
-    scaler = None
-    cov_scaler = None
-    
-    if use_scaler:
-        scaler = Scaler()
-        hist_series_scaled = scaler.fit_transform(hist_series)
-        train_scaled = scaler.fit_transform(train)
-        
-        cov_scaler = Scaler()
-        train_cov_scaled = cov_scaler.fit_transform(train_cov)
-        hist_covariates_scaled = cov_scaler.fit_transform(hist_covariates)
-    else:
-        hist_series_scaled = hist_series
-        train_scaled = train
-        train_cov_scaled = train_cov
-        hist_covariates_scaled = hist_covariates
-
-    # Create and train model
-    model = create_model(model_name, window_size, config)
-    
-    if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-        model.fit(train_scaled)
-    else:
-        model.fit(train_scaled, past_covariates=train_cov_scaled)
-
-    # Make predictions
-    if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-        pred = model.predict(n=len(test), series=train_scaled)
-    else:
-        pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_covariates_scaled)
-
-    # Inverse transform if scaled
-    if use_scaler:
-        pred = scaler.inverse_transform(pred)
-        test = scaler.inverse_transform(test)
-
-    # Calculate metrics
-    observed = test_raw.values().flatten()
-    predicted = pred.values().flatten()
-    metrics = calculate_metrics(observed, predicted)
-
-    # Refit model on full historical data
-    if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-        model.fit(hist_series_scaled)
-    else:
-        model.fit(hist_series_scaled, past_covariates=hist_covariates_scaled)
-
-    # Forecast to 2099
-    last_date = df["ds"].max()
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month)
-    
-    
-    # Prepare future covariates
-    future_time_idx = pd.date_range(
-        start=full_future_cov.time_index[0], 
-        periods=len(full_future_cov), 
-        freq="MS"
-    )
-        
-    full_future_cov_combined = build_cyclic_covariates(future_time_idx)
-
-    if cov_scaler is not None:
-        full_future_cov_combined = cov_scaler.transform(full_future_cov_combined)
-
-    # Make forecast
-    if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-        forecast = model.predict(n=months_to_2099, series=hist_series_scaled)
-    else:
-        forecast = model.predict(
-            n=months_to_2099,
-            series=hist_series_scaled,
-            past_covariates=full_future_cov_combined,
-            num_samples=100
-        )
-
-    if scaler is not None:
-        forecast = scaler.inverse_transform(forecast)
-        hist_series_scaled = scaler.inverse_transform(hist_series_scaled)
-
-    # Plot results
-    plt.figure(figsize=(16, 6))
-    plt.plot(df['ds'], df[value_col], label="Historical", lw=0.6)
-    plt.plot(pred.time_index, predicted, label="Predicted", lw=0.4, color="red", linestyle="--")
-    plt.plot(forecast.time_index, forecast.values(), label="Forecast", lw=0.6, color="green")
-    plt.title(f"{station} {value_col} {model_name} Forecast till 2099")
-    plt.xlabel("Date")
-    plt.ylabel(value_col)
-    plt.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
-    plt.legend()
-    plt.grid(True)
-    
-    # Add metrics text box
-    metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
-    plt.gca().text(
-        0.02, 0.95, metrics_text,
-        transform=plt.gca().transAxes,
-        fontsize=10,
-        verticalalignment="top",
-        bbox=dict(boxstyle="round,pad=0.3", edgecolor="black", facecolor="white", alpha=0.7)
-    )
-    
-    outfile = os.path.join(config.output_folder, f"{station} {value_col}_{model_name}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    return {
-        "spi": value_col,
-        "model": model_name,
-        **metrics,
-        "horizon": config.horizon,
-        "window_size": window_size,
-        "epoch": config.num_epochs,
-        "forecast": forecast,
-        "pred": pred,
-        "series": hist_series
-    }
-    
+ 
 def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dict:
     """
     Pick best model using multiple metrics
@@ -723,12 +521,8 @@ def plot_heatmaps(station, results, outfile):
     plt.close()
 
 
-# Main Execution
-# -----------------------------
 def main():
-    """Main execution function"""
     config = ForecastConfig()
-    setup_plotting()
     all_results = []
     
     data_files = glob.glob(os.path.join(config.input_folder, "*.csv"))
@@ -745,26 +539,165 @@ def main():
         df = df.set_index("ds").asfreq("MS").reset_index()
             
         last_date = df['ds'].max()
-        
-        # Build future covariates
-        future_covariates_ts, hist_ts, future_ts = build_future_covariates(df,station ,last_date, config)
-        plot_covariate_forecasts(hist_ts, future_ts, "tm_m", station, config, color="blue")
-        plot_covariate_forecasts(hist_ts, future_ts, "precip", station, config, color="green")
-        full_cov = hist_ts.concatenate(future_ts)
+        config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
+        config.station = station
+
+        full_cov, hist_cov = build_future_covariates(df, config)
+        raw_hist_cov = hist_cov.copy()
+        raw_full_cov = full_cov.copy()
+
 
         best_results = []
         for spi in config.SPI:
             model_metrics = []
+
+            # Prepare data
+            df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
+            hist = TimeSeries.from_dataframe(df_spi, 'ds', spi)
+            # Check seasonality
+            is_seasonal, period = check_seasonality(hist, max_lag=150)
+            print(f"Seasonality check for {spi}: {is_seasonal}, period: {period}")
+            
+            # Plot ACF
+            plot_acf(hist, period, max_lag=150)
+            plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
+            plt.title(f"ACF Plot (Period = {period})")
+            outfile = os.path.join(config.output_folder, f"acf_plot_{station} {spi}.png")
+            plt.savefig(outfile, dpi=300, bbox_inches="tight")
+            plt.close()
+
+            window_size = int(period) if period > 36 else 36
+
+
+            raw_hist = hist.copy()
+
+
             for model_name in config.models_to_test:
                 print(f"Running: {station} {spi} {model_name}")
+                            
+                # Split data
+                hist = raw_hist
+                hist_cov = raw_hist_cov.slice_intersect(hist)
+                full_cov = raw_full_cov.slice(hist.start_time(), full_cov.end_time())
+                train, test = hist.split_before(config.train_test_split)
+                train_cov, test_cov = hist_cov.split_before(config.train_test_split)
+                test_raw = test.copy()
+                if model_name == "WTLSTM":
+                    train, test,hist, train_cov, test_cov,hist_cov,full_cov = prepare_wavelet_data(spi,train, test,hist, train_cov, test_cov,hist_cov,full_cov)
+
+                # Scale data if needed
+                use_scaler = model_name in ["SVR", "LSTM", "WTLSTM"]
+                scaler = None
                 
-                res = train_and_forecast(df, spi, station,model_name, full_cov, config)
-                if res:
-                    model_metrics.append(res)
-                    all_results.append({
-                        "station": station,
-                        **{k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]}
-                    })
+                if use_scaler:
+                    scaler = Scaler()
+                    train_scaled = scaler.fit_transform(train)
+                    test_scaled = scaler.transform(test)
+                    hist_scaled = scaler.transform(hist)
+                                        
+                    cov_scaler = Scaler()
+                    train_cov_scaled = cov_scaler.fit_transform(train_cov)
+                    test_cov_scaled = cov_scaler.transform(test_cov)
+                    hist_cov_scaled = cov_scaler.transform(hist_cov)
+                    full_cov_scaled = cov_scaler.transform(full_cov)
+                else:
+                    train_scaled = train
+                    test_scaled = test
+                    hist_scaled = hist
+
+                    train_cov_scaled = train_cov
+                    test_cov_scaled = test_cov
+                    hist_cov_scaled = hist_cov
+                    full_cov_scaled =full_cov
+
+
+                # Create and train model
+                model = create_model(model_name, window_size, config)
+                
+                if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
+                    model.fit(train_scaled)
+                else:
+                    model.fit(train_scaled, past_covariates=train_cov_scaled)
+
+                # Make predictions
+                if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
+                    pred = model.predict(n=len(test), series=train_scaled)
+                else:
+                    pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_cov_scaled)
+
+                # Inverse transform if scaled
+                if use_scaler:
+                    pred = scaler.inverse_transform(pred)
+                    test = scaler.inverse_transform(test)
+
+                # Calculate metrics
+                observed = test_raw.values().flatten()
+                predicted = pred.values().flatten()
+                metrics = calculate_metrics(observed, predicted)
+
+                # Refit model on full historical data
+                if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
+                    model.fit(hist_scaled)
+                else:
+                    model.fit(hist_scaled, past_covariates=hist_cov_scaled)
+
+                
+                # Make forecast
+                if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
+                    forecast = model.predict(n=config.months_to_2099, series=hist_scaled)
+                else:
+                    forecast = model.predict(
+                        n=config.months_to_2099,
+                        series=hist_scaled,
+                        past_covariates=full_cov_scaled
+                    )
+
+                if scaler is not None:
+                    forecast = scaler.inverse_transform(forecast)
+                    hist_scaled = scaler.inverse_transform(hist_scaled)
+
+                # Plot results
+                plt.figure(figsize=(16, 6))
+                plt.plot(test_raw.time_index, test_raw.values(), label="Historical", lw=0.6)
+                plt.plot(pred.time_index, predicted, label="Predicted", lw=0.4, color="red", linestyle="--")
+                plt.plot(forecast.time_index, forecast.values(), label="Forecast", lw=0.6, color="green")
+                plt.title(f"{station} {spi} {model_name} Forecast till 2099")
+                plt.xlabel("Date")
+                plt.ylabel(spi)
+                plt.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
+                plt.legend()
+                plt.grid(True)
+                
+                # Add metrics text box
+                metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
+                plt.gca().text(
+                    0.02, 0.95, metrics_text,
+                    transform=plt.gca().transAxes,
+                    fontsize=10,
+                    verticalalignment="top",
+                    bbox=dict(boxstyle="round,pad=0.3", edgecolor="black", facecolor="white", alpha=0.7)
+                )
+                
+                outfile = os.path.join(config.output_folder, f"{station} {spi}_{model_name}.png")
+                plt.savefig(outfile, dpi=300, bbox_inches="tight")
+                plt.close() 
+                res = {
+                    "spi": spi,
+                    "model": model_name,
+                    **metrics,
+                    "horizon": config.horizon,
+                    "window_size": window_size,
+                    "epoch": config.num_epochs,
+                    "forecast": forecast,
+                    "pred": pred,
+                    "series": hist
+                }
+
+                model_metrics.append(res)
+                all_results.append({
+                    "station": station,
+                    **{k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]}
+                })
             
             # Select best model for this SPI
             best_model = pick_best_model(model_metrics)
