@@ -23,23 +23,27 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon = 1
+        self.horizon = 3
+        # self.num_epochs = 300
         self.num_epochs = 300
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r3"
-        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
+        self.output_folder = "./Results/r15"
+        # self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+        self.SPI = [ "SPI_12"]
+        # self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR"]
+        # self.models_to_test = ["RandomForest"]
         self.train_test_split = 0.8
-        self.lstm_hidden_dim = 128
-        self.lstm_batch_size = 16
+        self.lstm_hidden_dim = 32
+        self.lstm_batch_size = 32
         self.lstm_dropout = 0
-        self.lstm_layers = 2
+        self.lstm_layers = 1
         
         # Create output directory
         os.makedirs(self.output_folder, exist_ok=True)
         
         # Set random seed for reproducibility
-        np.random.seed(self.SEED)
+        # np.random.seed(self.SEED)
 
 
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
@@ -66,16 +70,7 @@ def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) ->
     return denoised[:len(series)]
 
 def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, float]:
-    """
-    Calculate evaluation metrics for forecasts
-    
-    Args:
-        observed: Array of observed values
-        predicted: Array of predicted values
-        
-    Returns:
-        Dictionary of evaluation metrics
-    """
+
     std_ref = np.std(observed, ddof=1)
     std_sim = np.std(predicted, ddof=1)
     corr_val = pearsonr(observed, predicted)[0]
@@ -104,24 +99,28 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     
     df = df.copy()
 
-    scaler = Scaler()
     series = TimeSeries.from_dataframe(df, 'ds', col)
 
     # Check seasonality
-    is_seasonal, period = check_seasonality(series, max_lag=150)
+    for m in range(2, 36):
+        is_seasonal, period = check_seasonality(series, m=m, alpha=0.05)
+        if is_seasonal:
+            # print(f"There is seasonality of order {period}.")
+            break
+    # is_seasonal, period = check_seasonality(series, max_lag=150)
     print(f"Seasonality check: {is_seasonal}, period: {period}")
     
     # Plot ACF
     plot_acf(series, period, max_lag=150)
     plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
     plt.title(f"ACF Plot (Period = {period})")
-    # plt.legend()
     outfile = os.path.join(config.output_folder, f"acf_plot_{config.station} {col}.png")
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
-    window_size = int(period) if period > 36 else 36 
+    window_size = int(period) if period > 0 else 12 
 
+    scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
 
 
@@ -141,7 +140,8 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
         random_state=config.SEED
     )
 
-    model.fit(series_scaled, past_covariates=cyc_cov)
+    # model.fit(series_scaled, past_covariates=cyc_cov)
+    model.fit(series_scaled)
 
     # Create future covariates for prediction
     future_time_idx = pd.date_range(
@@ -155,7 +155,8 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     cyc_cov_future_scaled = cov_scaler.transform(cyc_cov_future)
 
     # Predict
-    fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled, past_covariates=cyc_cov_future_scaled)
+    # fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled, past_covariates=cyc_cov_future_scaled)
+    fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled)
     fc = scaler.inverse_transform(fc_scaled)
 
 
@@ -279,21 +280,24 @@ def create_model(model_name: str, window_size: int, config: ForecastConfig):
     
     if model_name == "ExtraTrees":
         return RegressionModel(
-            ExtraTreesRegressor(n_estimators=100, max_depth=10, random_state=config.SEED, n_jobs=-1),
+            model=ExtraTreesRegressor(n_estimators=100, max_depth=10,random_state=config.SEED),
             lags=window_size, 
-            output_chunk_length=config.horizon
+            output_chunk_length=config.horizon,                        # use past 12 months of target SPI_12
+    lags_past_covariates=[-1, -12]
         )
     elif model_name == "RandomForest":
         return RegressionModel(
-            RandomForestRegressor(n_estimators=100, max_depth=10, random_state=config.SEED, n_jobs=-1),
+            model=RandomForestRegressor(n_estimators=100, max_depth=10,random_state=config.SEED),
             lags=window_size, 
-            output_chunk_length=config.horizon
+            output_chunk_length=config.horizon,                        # use past 12 months of target SPI_12
+    lags_past_covariates=[-1, -12]
         )
     elif model_name == "SVR":
         return RegressionModel(
-            SVR(kernel="rbf", C=1, gamma=0.01, epsilon=0.01),
+            model=SVR(kernel="rbf", C=1, gamma=0.01, epsilon=0.01),
             lags=window_size, 
-            output_chunk_length=config.horizon
+            output_chunk_length=config.horizon,                        # use past 12 months of target SPI_12
+    lags_past_covariates=[-1, -12]
         )
     elif model_name == "LSTM":
         return BlockRNNModel(
@@ -516,7 +520,7 @@ def plot_heatmaps(station, results, outfile):
     fig.colorbar(hm.collections[0], cax=cbar_ax, label="SPI Value")
 
     plt.suptitle(f"SPI Heatmaps — Station {station}", fontsize=16, weight="bold")
-    plt.tight_layout(rect=[0, 0, 0.9, 0.96])
+    # plt.tight_layout(rect=[0, 0, 0.9, 0.96])
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -542,7 +546,10 @@ def main():
         config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
         config.station = station
 
-        full_cov, hist_cov = build_future_covariates(df, config)
+        # full_cov, hist_cov = build_future_covariates(df, config)
+        hist = TimeSeries.from_dataframe(df, 'ds', "SPI_1")
+
+        full_cov, hist_cov = hist,hist
         raw_hist_cov = hist_cov.copy()
         raw_full_cov = full_cov.copy()
 
@@ -566,7 +573,7 @@ def main():
             plt.savefig(outfile, dpi=300, bbox_inches="tight")
             plt.close()
 
-            window_size = int(period) if period > 36 else 36
+            window_size = int(period) if period > 0 else 12
 
 
             raw_hist = hist.copy()
@@ -614,16 +621,45 @@ def main():
                 # Create and train model
                 model = create_model(model_name, window_size, config)
                 
-                if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-                    model.fit(train_scaled)
-                else:
-                    model.fit(train_scaled, past_covariates=train_cov_scaled)
+                print(">>> Model created:", model.__class__, getattr(model, "regressor", None))
+
+                # If it's a RegressionModel, print the underlying regressor class & params
+                if hasattr(model, "regressor"):
+                    try:
+                        reg = model.regressor
+                    except Exception:
+                        reg = getattr(model, "model", None)
+                    print("Regressor class:", reg.__class__)
+                    try:
+                        print("Regressor params sample:", {k: v for k, v in reg.get_params().items() if k in ["n_estimators","max_depth","C","gamma","epsilon"]})
+                    except Exception:
+                        pass
+
+
+    #             if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
+    #                 model.fit(train_scaled, 
+    # past_covariates=train_cov, 
+    # future_covariates=train_cov )
+    #             else:
+                model.fit(train_scaled, past_covariates=train_cov_scaled)
+
+                print("Fitted. train start/end:", train_scaled.start_time(), train_scaled.end_time())
+                if hasattr(train_cov_scaled, "start_time"):
+                    print("train_cov start/end:", getattr(train_cov_scaled, "start_time", None), getattr(train_cov_scaled, "end_time", None))
+
 
                 # Make predictions
-                if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-                    pred = model.predict(n=len(test), series=train_scaled)
-                else:
-                    pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_cov_scaled)
+    #             if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
+    #                 pred = model.predict(n=len(test), series=train_scaled,
+    # past_covariates=hist_cov_scaled)
+    #             else:
+                pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_cov_scaled)
+
+                print("Pred length:", len(pred))
+                print("Pred sample:", pred.values().flatten()[:8])
+                print("Pred unique values count:", len(np.unique(pred.values().flatten())))
+                print("Pred mean/std:", np.mean(pred.values().flatten()), np.std(pred.values().flatten()))
+
 
                 # Inverse transform if scaled
                 if use_scaler:
@@ -637,14 +673,15 @@ def main():
 
                 # Refit model on full historical data
                 if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-                    model.fit(hist_scaled)
+                    model.fit(hist_scaled, past_covariates=hist_cov_scaled)
                 else:
                     model.fit(hist_scaled, past_covariates=hist_cov_scaled)
 
                 
                 # Make forecast
                 if model_name in ["SVR", "RandomForest", "ExtraTrees"]:
-                    forecast = model.predict(n=config.months_to_2099, series=hist_scaled)
+                    forecast = model.predict(n=config.months_to_2099, series=hist_scaled,
+                        past_covariates=full_cov_scaled)
                 else:
                     forecast = model.predict(
                         n=config.months_to_2099,
@@ -658,7 +695,7 @@ def main():
 
                 # Plot results
                 plt.figure(figsize=(16, 6))
-                plt.plot(test_raw.time_index, test_raw.values(), label="Historical", lw=0.6)
+                plt.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
                 plt.plot(pred.time_index, predicted, label="Predicted", lw=0.4, color="red", linestyle="--")
                 plt.plot(forecast.time_index, forecast.values(), label="Forecast", lw=0.6, color="green")
                 plt.title(f"{station} {spi} {model_name} Forecast till 2099")
