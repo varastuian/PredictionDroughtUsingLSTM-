@@ -24,19 +24,16 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon = 6
-        self.num_epochs = 20
+        self.num_epochs = 300
         self.input_folder = "./Data/maindata"
         self.output_folder = "./Results/r1"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        # self.SPI = [ "SPI_12"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
-        # self.models_to_test = ["ExtraTrees", "RandomForest", "SVR"]
-        # self.models_to_test = ["RandomForest"]
         self.train_test_split = 0.8
-        self.lstm_hidden_dim = 32
+        self.lstm_hidden_dim = 64
         self.lstm_batch_size = 32
-        self.lstm_dropout = 0
-        self.lstm_layers = 1
+        self.lstm_dropout = 0.1
+        self.lstm_layers = 2
         
         # Create output directory
         os.makedirs(self.output_folder, exist_ok=True)
@@ -320,7 +317,6 @@ def create_model(model_name: str, window_size: int, config: ForecastConfig):
             # ,likelihood=GaussianLikelihood()
         )
     
- 
 def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dict:
     if weights is None:
         weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
@@ -530,8 +526,7 @@ def main():
         config.station = station
 
         full_cov, hist_cov = build_future_covariates(df, config)
-        # hist = TimeSeries.from_dataframe(df, 'ds', "SPI_1")
-        # full_cov, hist_cov = hist,hist
+
 
         raw_hist_cov = hist_cov.copy()
         raw_full_cov = full_cov.copy()
