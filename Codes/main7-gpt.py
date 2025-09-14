@@ -33,7 +33,7 @@ class ForecastConfig:
         self.horizon = 1
         self.num_epochs = 300
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r44"
+        self.output_folder = "./Results/r1"
         # self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.SPI = ["SPI_12"]
         self.models_to_test = ["ExtraTrees", "WTLSTM", "RandomForest", "SVR", "LSTM"]
@@ -72,7 +72,6 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
     # cyc_cov = month_cov.stack(year_cov)
     return cyc_cov
-
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     """
@@ -128,7 +127,6 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
         "mae": mae_val,
         "mape": mape_val
     }
-
 
 def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     
@@ -204,7 +202,6 @@ def forecast_covariate_to_2099(df: pd.DataFrame,station, col: str, last_date: da
 
     return series, fc
 
-
 def forecast_precip_to_2099(df: pd.DataFrame, station: str, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
     df = df.copy()
     df["ds"] = pd.to_datetime(df["ds"])
@@ -230,7 +227,6 @@ def forecast_precip_to_2099(df: pd.DataFrame, station: str, last_date: datetime,
     hist_precip = TimeSeries.from_dataframe(df, "ds", ["precip"])
     return hist_precip, fc_precip_final
 
-
 def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
 
     # Forecast temperature and precipitation
@@ -254,7 +250,6 @@ def build_future_covariates(df: pd.DataFrame,station, last_date: datetime, confi
 
     return full_future_cov, hist_ts, future_ts
 
-
 def plot_covariate_forecasts(hist_ts: TimeSeries, future_ts: TimeSeries, covariate: str, 
                             station: str, config: ForecastConfig, color: str = "blue"):
 
@@ -273,7 +268,6 @@ def plot_covariate_forecasts(hist_ts: TimeSeries, future_ts: TimeSeries, covaria
     outfile = os.path.join(config.output_folder, f"covariate_{covariate}_{station}.png") 
     plt.savefig(outfile, dpi=300, bbox_inches="tight") 
     plt.close()
-    
 
 def prepare_wavelet_data(train_series: TimeSeries, test_series: TimeSeries, 
                         train_cov: TimeSeries, test_cov: TimeSeries, 
@@ -573,7 +567,6 @@ def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dic
 
     best_idx = np.argmin(scores)
     return valid_models[best_idx]
-
 
 def taylor_diagram_panel(config,metrics_df, station, outfile):
 
