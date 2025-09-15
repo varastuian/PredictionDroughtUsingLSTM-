@@ -3,8 +3,7 @@ import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Any
-from datetime import datetime
+from typing import Dict, List, Tuple
 import seaborn as sns
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.svm import SVR
@@ -23,22 +22,21 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon = 6
-        self.num_epochs = 300
+        self.horizon = 1
+        self.num_epochs = 100
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r1"
+        self.output_folder = "./Results/r7"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
-        self.lstm_hidden_dim = 64
-        self.lstm_batch_size = 32
-        self.lstm_dropout = 0.1
-        self.lstm_layers = 2
+        # self.lstm_hidden_dim = 32
+        # self.lstm_batch_size = 32
+        # self.lstm_dropout = 0.1
+        # self.lstm_layers = 1
         
         # Create output directory
         os.makedirs(self.output_folder, exist_ok=True)
-        
-        # Set random seed for reproducibility
+
         np.random.seed(self.SEED)
 
 
@@ -50,7 +48,8 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     year_scaled = (year_cov.values() - year_cov.values().min()) / (year_cov.values().max() - year_cov.values().min())
     year_scaled_ts = TimeSeries.from_times_and_values(time_index, year_scaled)
     
-    cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
+    # cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
+    cyc_cov = month_cov.stack(year_cov)
     return cyc_cov
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
@@ -94,13 +93,8 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
 
     series = TimeSeries.from_dataframe(df, 'ds', col)
 
-    # Check seasonality
-    # for m in range(2, 36):
-    #     is_seasonal, period = check_seasonality(series, m=m, alpha=0.05)
-    #     if is_seasonal:
-    #         # print(f"There is seasonality of order {period}.")
-    #         break
-    is_seasonal, period = check_seasonality(series, max_lag=150)
+
+    is_seasonal, period = check_seasonality(series, max_lag=60, alpha=0.05)
     print(f"Seasonality check: {is_seasonal}, period: {period}")
     
     # Plot ACF
@@ -111,7 +105,7 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
 
-    window_size = int(period) if period > 0 else 12 
+    window_size = int(period) if period > 12 else 12 
 
     scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
@@ -127,9 +121,9 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
         input_chunk_length=window_size,
         output_chunk_length=config.horizon,
         n_epochs=config.num_epochs,
-        dropout=config.lstm_dropout,
-        hidden_dim=config.lstm_hidden_dim,
-        batch_size=config.lstm_batch_size,
+        # dropout=config.lstm_dropout,
+        # hidden_dim=config.lstm_hidden_dim,
+        # batch_size=config.lstm_batch_size,
         random_state=config.SEED
     )
 
@@ -272,47 +266,34 @@ def create_model(model_name: str, window_size: int, config: ForecastConfig):
     if model_name == "ExtraTrees":
         return RegressionModel(
             model=ExtraTreesRegressor(n_estimators=100, max_depth=10,random_state=config.SEED),
-            lags=window_size, 
-            lags_past_covariates=[-1, -12],
+            lags=window_size,
             output_chunk_length=config.horizon              
+            ,lags_past_covariates=[-i for i in range(1,13)],
         )
     elif model_name == "RandomForest":
         return RegressionModel(
             model=RandomForestRegressor(n_estimators=100, max_depth=10,random_state=config.SEED),
             lags=window_size, 
-            output_chunk_length=config.horizon,                       
-            lags_past_covariates=[-1, -12]
+            output_chunk_length=config.horizon                      
+            ,lags_past_covariates=[-i for i in range(1,13)]
         )
     elif model_name == "SVR":
         return RegressionModel(
             model=SVR(kernel="rbf", C=1, gamma=0.01, epsilon=0.01),
             lags=window_size, 
-            output_chunk_length=config.horizon,                        # use past 12 months of target SPI_12
-    lags_past_covariates=[-1, -12]
+            output_chunk_length=config.horizon           
+            ,lags_past_covariates=[-i for i in range(1,13)]
         )
-    elif model_name == "LSTM":
+    elif model_name in ["LSTM","WTLSTM"] :
         return BlockRNNModel(
             model="LSTM", 
             input_chunk_length=window_size, 
             output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
-            dropout=config.lstm_dropout,
-            n_rnn_layers=config.lstm_layers,
-            hidden_dim=config.lstm_hidden_dim, 
-            batch_size=config.lstm_batch_size, 
-            random_state=config.SEED
-            # ,likelihood=GaussianLikelihood()
-        )
-    elif model_name == "WTLSTM":
-        return BlockRNNModel(
-            model='LSTM', 
-            input_chunk_length=window_size, 
-            output_chunk_length=config.horizon,
-            n_epochs=config.num_epochs, 
-            dropout=config.lstm_dropout,
-            n_rnn_layers=config.lstm_layers,
-            hidden_dim=config.lstm_hidden_dim, 
-            batch_size=config.lstm_batch_size, 
+            # dropout=config.lstm_dropout,
+            # n_rnn_layers=config.lstm_layers,
+            # hidden_dim=config.lstm_hidden_dim, 
+            # batch_size=config.lstm_batch_size, 
             random_state=config.SEED
             # ,likelihood=GaussianLikelihood()
         )
@@ -513,8 +494,7 @@ def main():
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        # if station !="40712":
-        #     continue
+
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
@@ -522,7 +502,8 @@ def main():
         df = df.set_index("ds").asfreq("MS").reset_index()
             
         last_date = df['ds'].max()
-        config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
+        # config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
+        config.months_to_2099 = (2029 - last_date.year) * 12 + (12 - last_date.month+1)
         config.station = station
 
         full_cov, hist_cov = build_future_covariates(df, config)
@@ -540,18 +521,18 @@ def main():
             df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
             hist = TimeSeries.from_dataframe(df_spi, 'ds', spi)
             # Check seasonality
-            is_seasonal, period = check_seasonality(hist, max_lag=150)
+            is_seasonal, period = check_seasonality(hist, max_lag=60, alpha=0.05)
             print(f"Seasonality check for {spi}: {is_seasonal}, period: {period}")
             
-            # Plot ACF
-            plot_acf(hist, period, max_lag=150)
-            plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
-            plt.title(f"ACF Plot (Period = {period})")
-            outfile = os.path.join(config.output_folder, f"acf_plot_{station} {spi}.png")
-            plt.savefig(outfile, dpi=300, bbox_inches="tight")
-            plt.close()
+            # # Plot ACF
+            # plot_acf(hist, period, max_lag=150)
+            # plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
+            # plt.title(f"ACF Plot (Period = {period})")
+            # outfile = os.path.join(config.output_folder, f"acf_plot_{station} {spi}.png")
+            # plt.savefig(outfile, dpi=300, bbox_inches="tight")
+            # plt.close()
 
-            window_size = int(period) if period > 0 else 12
+            window_size = int(period) if period > 36 else 36
 
 
             raw_hist = hist.copy()
@@ -601,9 +582,11 @@ def main():
                 
                 
                 model.fit(train_scaled, past_covariates=train_cov_scaled)
+                # model.fit(train_scaled)
 
             
                 pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_cov_scaled)
+                # pred = model.predict(n=len(test), series=train_scaled)
 
              
 
@@ -619,16 +602,19 @@ def main():
 
                 # Refit model on full historical data
 
-                model.fit(hist_scaled, past_covariates=hist_cov_scaled)
+                model.fit(hist_scaled
+                , past_covariates=hist_cov_scaled)
 
                 
                 # Make forecast
 
                 forecast = model.predict(
                         n=config.months_to_2099,
-                        series=hist_scaled,
-                        past_covariates=full_cov_scaled
+                        series=hist_scaled
+                        ,past_covariates=full_cov_scaled
                     )
+                
+
 
                 if scaler is not None:
                     forecast = scaler.inverse_transform(forecast)
