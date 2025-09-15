@@ -5,12 +5,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple
 import seaborn as sns
-from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from scipy.stats import pearsonr
 from darts import TimeSeries
-from darts.models import BlockRNNModel, RegressionModel
+from darts.models import BlockRNNModel, RegressionModel,RandomForest,XGBModel
 # from darts.metrics import mae, mape, rmse
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
 from darts.dataprocessing.transformers import Scaler
@@ -264,15 +263,14 @@ def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_co
 def create_model(model_name: str, window_size: int, config: ForecastConfig):
     
     if model_name == "ExtraTrees":
-        return RegressionModel(
-            model=ExtraTreesRegressor(n_estimators=100, max_depth=10,random_state=config.SEED),
+        return XGBModel(
             lags=window_size,
             output_chunk_length=config.horizon              
             ,lags_past_covariates=[-i for i in range(1,13)],
         )
     elif model_name == "RandomForest":
-        return RegressionModel(
-            model=RandomForestRegressor(n_estimators=100, max_depth=10,random_state=config.SEED),
+        return RandomForest(
+            n_estimators=100,random_state=config.SEED,
             lags=window_size, 
             output_chunk_length=config.horizon                      
             ,lags_past_covariates=[-i for i in range(1,13)]
