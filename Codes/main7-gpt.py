@@ -24,19 +24,128 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  1
         self.num_epochs = 350
+        # self.num_epochs = 1
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r17"
+        self.output_folder = "./Results/r18"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
+        # self.lstm_hidden_dim = 1
         self.lstm_dropout = 0.0
         self.lstm_layers = 2
+        # self.lstm_layers = 1
         
         # Create output directory
         os.makedirs(self.output_folder, exist_ok=True)
 
         np.random.seed(self.SEED)
+
+def plot_raw_data(df, station, config):
+    """Plot raw time series data (SPI, precipitation, temperature)."""
+    plt.figure(figsize=(16,8))
+    for col in ["precip", "tm_m"] + [c for c in df.columns if c.startswith("SPI_")]:
+        if col in df.columns:
+            plt.plot(df["ds"], df[col], lw=0.7, label=col)
+    plt.title(f"Raw Data — Station {station}")
+    plt.xlabel("Date")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"rawdata_{station}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_scatter(observed, predicted, station, spi, model, config):
+    plt.figure(figsize=(6,6))
+    plt.scatter(observed, predicted, alpha=0.5, edgecolor="k")
+    lims = [min(observed.min(), predicted.min()), max(observed.max(), predicted.max())]
+    plt.plot(lims, lims, "r--", lw=1.5, label="1:1 Line")
+    plt.xlabel("Observed")
+    plt.ylabel("Predicted")
+    plt.title(f"{station} - {spi} ({model})")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"scatter_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_residual_distribution(observed, predicted, station, spi, model, config):
+    residuals = observed - predicted
+    plt.figure(figsize=(8,5))
+    sns.histplot(residuals, kde=True, bins=30, color="purple")
+    plt.axvline(0, color="red", linestyle="--")
+    plt.title(f"Residuals — {station} {spi} ({model})")
+    plt.xlabel("Residual")
+    plt.ylabel("Frequency")
+    outfile = os.path.join(config.output_folder, f"residuals_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_rolling_error(observed, predicted, time_index, station, spi, model, config, window=12):
+    errors = (observed - predicted)**2
+    rolling_rmse = np.sqrt(pd.Series(errors, index=time_index).rolling(window).mean())
+    plt.figure(figsize=(12,5))
+    rolling_rmse.plot(color="blue", lw=1.5)
+    plt.title(f"Rolling RMSE ({window}-month) — {station} {spi} ({model})")
+    plt.ylabel("RMSE")
+    plt.xlabel("Date")
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"rollingrmse_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_seasonal_cycle(hist_ts, forecast_ts, station, spi, config):
+    df_hist = hist_ts.pd_dataframe().reset_index()
+    df_fore = forecast_ts.pd_dataframe().reset_index()
+    df_hist["month"] = df_hist["ds"].dt.month
+    df_fore["month"] = df_fore["ds"].dt.month
+    
+    monthly_hist = df_hist.groupby("month").mean()
+    monthly_fore = df_fore.groupby("month").mean()
+    
+    plt.figure(figsize=(10,5))
+    plt.plot(monthly_hist.index, monthly_hist[spi], marker="o", label="Observed")
+    plt.plot(monthly_fore.index, monthly_fore[spi], marker="s", label="Forecast")
+    plt.xticks(range(1,13), ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
+    plt.title(f"Seasonal Cycle — {station} {spi}")
+    plt.ylabel(spi)
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"seasonalcycle_{station}_{spi}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_metric_boxplots(metrics_df, config):
+    metrics = ["rmse", "mae", "corr", "mape"]
+    for metric in metrics:
+        plt.figure(figsize=(10,6))
+        sns.boxplot(x="spi", y=metric, hue="model", data=metrics_df)
+        plt.title(f"Model Comparison by {metric.upper()}")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.tight_layout()
+        outfile = os.path.join(config.output_folder, f"boxplot_{metric}.png")
+        plt.savefig(outfile, dpi=300, bbox_inches="tight")
+        plt.close()
+
+
+def plot_model_ranking(metrics_df, config):
+    best_models = metrics_df.groupby(["station", "spi"]).apply(
+        lambda g: g.loc[g["rmse"].idxmin(), "model"]
+    )
+    counts = best_models.value_counts()
+    plt.figure(figsize=(8,5))
+    counts.plot(kind="bar", color="skyblue", edgecolor="k")
+    plt.title("Best Model Counts (Lowest RMSE)")
+    plt.ylabel("Count")
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, "bestmodel_counts.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
@@ -212,6 +321,97 @@ def plot_covariate_forecasts(hist_ts, future_ts, covariate: str, config: Forecas
     outfile = os.path.join(config.output_folder, f"covariate_{covariate}_{config.station}.png") 
     plt.savefig(outfile, dpi=300, bbox_inches="tight") 
     plt.close()
+
+def plot_scatter(observed, predicted, station, spi, model, config):
+    plt.figure(figsize=(6,6))
+    plt.scatter(observed, predicted, alpha=0.5, edgecolor="k")
+    min_val = min(observed.min(), predicted.min())
+    max_val = max(observed.max(), predicted.max())
+    plt.plot([min_val, max_val], [min_val, max_val], "r--", lw=1.5, label="1:1 Line")
+    plt.xlabel("Observed")
+    plt.ylabel("Predicted")
+    plt.title(f"{station} - {spi} ({model})")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"scatter_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+def plot_metric_boxplots(metrics_df, config):
+    metrics = ["rmse", "mae", "corr", "mape"]
+    for metric in metrics:
+        plt.figure(figsize=(10,6))
+        sns.boxplot(x="spi", y=metric, hue="model", data=metrics_df)
+        plt.title(f"Model Comparison by {metric.upper()}")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.tight_layout()
+        outfile = os.path.join(config.output_folder, f"boxplot_{metric}.png")
+        plt.savefig(outfile, dpi=300, bbox_inches="tight")
+        plt.close()
+
+
+def plot_residual_distribution(observed, predicted, station, spi, model, config):
+    residuals = observed - predicted
+    plt.figure(figsize=(8,5))
+    sns.histplot(residuals, kde=True, bins=30, color="purple")
+    plt.axvline(0, color="red", linestyle="--")
+    plt.title(f"Residual Distribution — {station} {spi} ({model})")
+    plt.xlabel("Residual")
+    plt.ylabel("Frequency")
+    outfile = os.path.join(config.output_folder, f"residuals_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+def plot_rolling_error(observed, predicted, time_index, station, spi, model, config, window=12):
+    errors = (observed - predicted)**2
+    rolling_rmse = np.sqrt(pd.Series(errors, index=time_index).rolling(window).mean())
+    plt.figure(figsize=(12,5))
+    rolling_rmse.plot(color="blue", lw=1.5)
+    plt.title(f"Rolling RMSE ({window}-month) — {station} {spi} ({model})")
+    plt.ylabel("RMSE")
+    plt.xlabel("Date")
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"rolling_rmse_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_seasonal_cycle(hist_ts, forecast_ts, station, spi, config):
+    df_hist = hist_ts.pd_dataframe().reset_index()
+    df_fore = forecast_ts.pd_dataframe().reset_index()
+    df_hist["month"] = df_hist["ds"].dt.month
+    df_fore["month"] = df_fore["ds"].dt.month
+    
+    monthly_hist = df_hist.groupby("month").mean()
+    monthly_fore = df_fore.groupby("month").mean()
+    
+    plt.figure(figsize=(10,5))
+    plt.plot(monthly_hist.index, monthly_hist[spi], marker="o", label="Observed")
+    plt.plot(monthly_fore.index, monthly_fore[spi], marker="s", label="Forecast")
+    plt.xticks(range(1,13), ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
+    plt.title(f"Seasonal Cycle Comparison — {station} {spi}")
+    plt.ylabel(spi)
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, f"seasonal_cycle_{station}_{spi}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_model_ranking(metrics_df, config):
+    best_models = metrics_df.groupby(["station", "spi"]).apply(
+        lambda g: g.loc[g["rmse"].idxmin(), "model"]
+    )
+    counts = best_models.value_counts()
+    plt.figure(figsize=(8,5))
+    counts.plot(kind="bar", color="skyblue", edgecolor="k")
+    plt.title("Best Model Counts (Lowest RMSE)")
+    plt.ylabel("Count")
+    plt.grid(True, linestyle="--", alpha=0.6)
+    outfile = os.path.join(config.output_folder, "best_model_counts.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
+
 
 def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_cov,full_cov):
    
@@ -485,7 +685,8 @@ def main():
         df = pd.read_csv(file, parse_dates=["ds"])
         df["ds"] = pd.to_datetime(df["ds"])
         df = df.set_index("ds").asfreq("MS").reset_index()
-            
+        plot_raw_data(df, station, config)
+
         last_date = df['ds'].max()
         config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
         config.station = station
@@ -572,6 +773,11 @@ def main():
                 predicted = pred.values().flatten()
                 metrics = calculate_metrics(observed, predicted)
 
+
+                plot_scatter(observed, predicted, station, spi, model_name, config)
+                plot_residual_distribution(observed, predicted, station, spi, model_name, config)
+                plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
+
                 # Refit model on full historical data
                 model.fit(hist_scaled
                 , past_covariates=hist_cov_scaled
@@ -636,7 +842,8 @@ def main():
             best_model = pick_best_model(model_metrics)
             if best_model:
                 best_results.append(best_model)
-        
+                plot_seasonal_cycle(best_model["series"], best_model["forecast"], station, best_model["spi"], config)
+
         # Save plots for this station
         if best_results:
             plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
@@ -651,6 +858,9 @@ def main():
         
         for station in metrics_df["station"].unique():
             taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
+        plot_metric_boxplots(metrics_df, config)
+        plot_model_ranking(metrics_df, config)
+
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
 
