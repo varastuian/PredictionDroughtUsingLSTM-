@@ -44,7 +44,7 @@ class ForecastConfig:
 def plot_raw_data(df, station, config):
     """Plot raw time series data (SPI, precipitation, temperature)."""
     plt.figure(figsize=(16,8))
-    for col in ["precip", "tm_m"] + [c for c in df.columns if c.startswith("SPI_")]:
+    for col in ["precip", "tm_m"]:
         if col in df.columns:
             plt.plot(df["ds"], df[col], lw=0.7, label=col)
     plt.title(f"Raw Data — Station {station}")
@@ -842,7 +842,7 @@ def main():
             best_model = pick_best_model(model_metrics)
             if best_model:
                 best_results.append(best_model)
-                plot_seasonal_cycle(best_model["series"], best_model["forecast"], station, best_model["spi"], config)
+                # plot_seasonal_cycle(best_model["series"], best_model["forecast"], station, best_model["spi"], config)
 
         # Save plots for this station
         if best_results:
