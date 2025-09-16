@@ -16,22 +16,22 @@ from darts.dataprocessing.transformers import Scaler
 from darts.utils.likelihood_models import GaussianLikelihood
 from darts.utils.statistics import check_seasonality , plot_acf
 import pywt
+from darts.utils.statistics import remove_seasonality
 
 class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon = 1
-        self.num_epochs = 100
+        self.horizon = 12
+        self.num_epochs = 150
         self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r7"
+        self.output_folder = "./Results/r17"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
-        # self.lstm_hidden_dim = 32
-        # self.lstm_batch_size = 32
-        # self.lstm_dropout = 0.1
-        # self.lstm_layers = 1
+        self.lstm_hidden_dim = 64
+        self.lstm_dropout = 0.1
+        self.lstm_layers = 2
         
         # Create output directory
         os.makedirs(self.output_folder, exist_ok=True)
@@ -41,15 +41,17 @@ class ForecastConfig:
 
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
-    month_cov = datetime_attribute_timeseries(time_index, "month", one_hot=True)
+    # month_cov = datetime_attribute_timeseries(time_index, "month", one_hot=True)
+    month_cov = datetime_attribute_timeseries(time_index, "month")
     year_cov = datetime_attribute_timeseries(time_index, "year")
     
     year_scaled = (year_cov.values() - year_cov.values().min()) / (year_cov.values().max() - year_cov.values().min())
     year_scaled_ts = TimeSeries.from_times_and_values(time_index, year_scaled)
     
     # cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
-    cyc_cov = month_cov.stack(year_cov)
+    cyc_cov = month_cov
     return cyc_cov
+
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     
@@ -96,15 +98,16 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     is_seasonal, period = check_seasonality(series, max_lag=60, alpha=0.05)
     print(f"Seasonality check: {is_seasonal}, period: {period}")
     
-    # Plot ACF
-    plot_acf(series, period, max_lag=150)
-    plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
-    plt.title(f"ACF Plot (Period = {period})")
-    outfile = os.path.join(config.output_folder, f"acf_plot_{config.station} {col}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
-    plt.close()
+    # # Plot ACF
+    # plot_acf(series, period, max_lag=150)
+    # plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
+    # plt.title(f"ACF Plot (Period = {period})")
+    # outfile = os.path.join(config.output_folder, f"acf_plot_{config.station} {col}.png")
+    # plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    # plt.close()
 
-    window_size = int(period) if period > 12 else 12 
+    # window_size = int(period) if period > 0 else 12 
+    window_size = 108
 
     scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
@@ -118,15 +121,21 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     model = BlockRNNModel(
         model='LSTM',
         input_chunk_length=window_size,
-        output_chunk_length=config.horizon,
+        # output_chunk_length=config.horizon,
+        output_chunk_length=1,
         n_epochs=config.num_epochs,
         # dropout=config.lstm_dropout,
+        dropout=config.lstm_dropout,
         # hidden_dim=config.lstm_hidden_dim,
-        # batch_size=config.lstm_batch_size,
+        hidden_dim=128,
+        n_rnn_layers=config.lstm_layers,
+
         random_state=config.SEED
     )
 
-    model.fit(series_scaled, past_covariates=cyc_cov)
+    model.fit(series_scaled
+            #   , past_covariates=cyc_cov
+              )
 
     # Create future covariates for prediction
     future_time_idx = pd.date_range(
@@ -140,7 +149,9 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     cyc_cov_future_scaled = cov_scaler.transform(cyc_cov_future)
 
     # Predict
-    fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled, past_covariates=cyc_cov_future_scaled)
+    fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled
+                            #   , past_covariates=cyc_cov_future_scaled
+                              )
     fc = scaler.inverse_transform(fc_scaled)
 
 
@@ -171,9 +182,11 @@ def forecast_precip_to_2099(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
 def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
 
     # Forecast temperature and precipitation
-    # hist_pr, fc_pr = forecast_covariate_to_2099(df, station,"precip", last_date, config)
-    hist_pr, fc_pr = forecast_precip_to_2099(df, config)
+    hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
+    # hist_pr, fc_pr = forecast_precip_to_2099(df, config)
     plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
+
+    exit(0)
 
     hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", config)
     plot_covariate_forecasts(hist_tm, fc_tm, "tm_m", config, color="blue")
@@ -197,7 +210,7 @@ def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
 
     hist_cov = hist_cov.stack(cyc_cov.split_before(future_cov.start_time())[0])
     full_cov = full_cov.stack(cyc_cov)
-
+    
 
     return full_cov, hist_cov
 
@@ -288,10 +301,9 @@ def create_model(model_name: str, window_size: int, config: ForecastConfig):
             input_chunk_length=window_size, 
             output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
-            # dropout=config.lstm_dropout,
-            # n_rnn_layers=config.lstm_layers,
-            # hidden_dim=config.lstm_hidden_dim, 
-            # batch_size=config.lstm_batch_size, 
+            dropout=config.lstm_dropout,
+            n_rnn_layers=config.lstm_layers,
+            hidden_dim=config.lstm_hidden_dim, 
             random_state=config.SEED
             # ,likelihood=GaussianLikelihood()
         )
@@ -401,24 +413,16 @@ def plot_final_forecasts(station, results, outfile):
     for i, res in enumerate(results):
         df = res["series"].to_dataframe().reset_index()
         spi = res["spi"]
-        # scaler = res["scaler"]
         forecast = res["forecast"]
         # Historical
         axes[i].plot(df["ds"], df[df.columns[1]], lw=0.6, alpha=0.7, label="Historical")
 
-        # Prediction
-        # if res["pred"] is not None:
-            # if scaler:
-        # pred_inv = scaler.transform(res["pred"])
         p = res["pred"].values().flatten()
 
         axes[i].plot(res["pred"].time_index, p, lw=0.7, color="red", label="Prediction")
 
         # Forecast
-        # if scaler:
-        #     forecast_inv = scaler.inverse_transform(res["forecast"])
-        #     f = forecast_inv.values().flatten()
-        # else:
+        
         f = forecast.values().flatten()
         axes[i].plot(res["forecast"].time_index, f, lw=0.7, color="green", label="Forecast")
 
@@ -500,12 +504,11 @@ def main():
         df = df.set_index("ds").asfreq("MS").reset_index()
             
         last_date = df['ds'].max()
-        # config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
-        config.months_to_2099 = (2029 - last_date.year) * 12 + (12 - last_date.month+1)
+        config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
         config.station = station
 
         full_cov, hist_cov = build_future_covariates(df, config)
-
+        exit(0)
 
         raw_hist_cov = hist_cov.copy()
         raw_full_cov = full_cov.copy()
@@ -530,7 +533,7 @@ def main():
             # plt.savefig(outfile, dpi=300, bbox_inches="tight")
             # plt.close()
 
-            window_size = int(period) if period > 36 else 36
+            window_size = int(period) if period > 0 else 12
 
 
             raw_hist = hist.copy()
@@ -580,14 +583,9 @@ def main():
                 
                 
                 model.fit(train_scaled, past_covariates=train_cov_scaled)
-                # model.fit(train_scaled)
 
-            
                 pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_cov_scaled)
-                # pred = model.predict(n=len(test), series=train_scaled)
-
              
-
                 # Inverse transform if scaled
                 if use_scaler:
                     pred = scaler.inverse_transform(pred)
@@ -599,21 +597,17 @@ def main():
                 metrics = calculate_metrics(observed, predicted)
 
                 # Refit model on full historical data
-
                 model.fit(hist_scaled
                 , past_covariates=hist_cov_scaled)
 
                 
                 # Make forecast
-
                 forecast = model.predict(
                         n=config.months_to_2099,
                         series=hist_scaled
                         ,past_covariates=full_cov_scaled
-                    )
+                )
                 
-
-
                 if scaler is not None:
                     forecast = scaler.inverse_transform(forecast)
                     hist_scaled = scaler.inverse_transform(hist_scaled)
