@@ -22,15 +22,15 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon = 12
-        self.num_epochs = 150
+        self.horizon =  1
+        self.num_epochs = 350
         self.input_folder = "./Data/maindata"
         self.output_folder = "./Results/r17"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
-        self.lstm_dropout = 0.1
+        self.lstm_dropout = 0.0
         self.lstm_layers = 2
         
         # Create output directory
@@ -93,21 +93,7 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     df = df.copy()
 
     series = TimeSeries.from_dataframe(df, 'ds', col)
-
-
-    is_seasonal, period = check_seasonality(series, max_lag=60, alpha=0.05)
-    print(f"Seasonality check: {is_seasonal}, period: {period}")
-    
-    # # Plot ACF
-    # plot_acf(series, period, max_lag=150)
-    # plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
-    # plt.title(f"ACF Plot (Period = {period})")
-    # outfile = os.path.join(config.output_folder, f"acf_plot_{config.station} {col}.png")
-    # plt.savefig(outfile, dpi=300, bbox_inches="tight")
-    # plt.close()
-
-    # window_size = int(period) if period > 0 else 12 
-    window_size = 108
+    window_size = 12
 
     scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
@@ -117,17 +103,13 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     cov_scaler = Scaler()
     cyc_cov = cov_scaler.fit_transform(cyc_cov)
 
-    # Initialize and train model
     model = BlockRNNModel(
         model='LSTM',
         input_chunk_length=window_size,
-        # output_chunk_length=config.horizon,
-        output_chunk_length=1,
-        n_epochs=config.num_epochs,
-        # dropout=config.lstm_dropout,
+        output_chunk_length=config.horizon,
+       n_epochs=config.num_epochs,
         dropout=config.lstm_dropout,
-        # hidden_dim=config.lstm_hidden_dim,
-        hidden_dim=128,
+        hidden_dim=config.lstm_hidden_dim,
         n_rnn_layers=config.lstm_layers,
 
         random_state=config.SEED
@@ -136,6 +118,8 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     model.fit(series_scaled
             #   , past_covariates=cyc_cov
               )
+
+
 
     # Create future covariates for prediction
     future_time_idx = pd.date_range(
@@ -186,7 +170,6 @@ def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
     # hist_pr, fc_pr = forecast_precip_to_2099(df, config)
     plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
 
-    exit(0)
 
     hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", config)
     plot_covariate_forecasts(hist_tm, fc_tm, "tm_m", config, color="blue")
@@ -208,8 +191,8 @@ def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
     cyc_cov = build_cyclic_covariates(full_cov.time_index)
 
 
-    hist_cov = hist_cov.stack(cyc_cov.split_before(future_cov.start_time())[0])
-    full_cov = full_cov.stack(cyc_cov)
+    # hist_cov = hist_cov.stack(cyc_cov.split_before(future_cov.start_time())[0])
+    # full_cov = full_cov.stack(cyc_cov)
     
 
     return full_cov, hist_cov
@@ -508,7 +491,6 @@ def main():
         config.station = station
 
         full_cov, hist_cov = build_future_covariates(df, config)
-        exit(0)
 
         raw_hist_cov = hist_cov.copy()
         raw_full_cov = full_cov.copy()
@@ -521,19 +503,9 @@ def main():
             # Prepare data
             df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
             hist = TimeSeries.from_dataframe(df_spi, 'ds', spi)
-            # Check seasonality
-            is_seasonal, period = check_seasonality(hist, max_lag=60, alpha=0.05)
-            print(f"Seasonality check for {spi}: {is_seasonal}, period: {period}")
             
-            # # Plot ACF
-            # plot_acf(hist, period, max_lag=150)
-            # plt.text(period + 2, plt.gca().get_ylim()[1] * 0.9, f"Period = {period}", color="red")
-            # plt.title(f"ACF Plot (Period = {period})")
-            # outfile = os.path.join(config.output_folder, f"acf_plot_{station} {spi}.png")
-            # plt.savefig(outfile, dpi=300, bbox_inches="tight")
-            # plt.close()
 
-            window_size = int(period) if period > 0 else 12
+            window_size = 12
 
 
             raw_hist = hist.copy()
@@ -582,9 +554,13 @@ def main():
                 model = create_model(model_name, window_size, config)
                 
                 
-                model.fit(train_scaled, past_covariates=train_cov_scaled)
+                model.fit(train_scaled
+                          , past_covariates=train_cov_scaled
+                          )
 
-                pred = model.predict(n=len(test), series=train_scaled, past_covariates=hist_cov_scaled)
+                pred = model.predict(n=len(test), series=train_scaled
+                                     , past_covariates=hist_cov_scaled
+                                     )
              
                 # Inverse transform if scaled
                 if use_scaler:
@@ -598,7 +574,8 @@ def main():
 
                 # Refit model on full historical data
                 model.fit(hist_scaled
-                , past_covariates=hist_cov_scaled)
+                , past_covariates=hist_cov_scaled
+                )
 
                 
                 # Make forecast
