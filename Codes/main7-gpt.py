@@ -41,21 +41,66 @@ class ForecastConfig:
 
         np.random.seed(self.SEED)
 
-def plot_raw_data(df, station, config):
-    """Plot raw time series data (SPI, precipitation, temperature)."""
-    plt.figure(figsize=(16,8))
-    for col in ["precip", "tm_m"]:
+def plot_raw_station_data(df, station, config):
+    """Plot raw data for a station: precip & temp, and all SPIs."""
+    fig, axes = plt.subplots(2, 1, figsize=(16,10), sharex=True)
+
+    # Precip & temp
+    for col, ax in zip(["precip", "tm_m"], axes):
         if col in df.columns:
-            plt.plot(df["ds"], df[col], lw=0.7, label=col)
-    plt.title(f"Raw Data — Station {station}")
-    plt.xlabel("Date")
-    plt.legend()
-    plt.grid(True, linestyle="--", alpha=0.6)
-    outfile = os.path.join(config.output_folder, f"rawdata_{station}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+            ax.plot(df["ds"], df[col], lw=0.7, label=col)
+            ax.set_title(f"{station} — {col}")
+            ax.legend()
+            ax.grid(True, linestyle="--", alpha=0.6)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.output_folder, f"raw_precip_temp_{station}.png"),
+                dpi=300, bbox_inches="tight")
     plt.close()
 
+    # SPIs grid
+    fig, axes = plt.subplots(3, 2, figsize=(16,12), sharex=True)
+    axes = axes.flatten()
+    for i, spi in enumerate(config.SPI):
+        if spi in df.columns:
+            axes[i].plot(df["ds"], df[spi], lw=0.7, label=spi, color="teal")
+            axes[i].set_title(f"{station} — {spi}")
+            axes[i].legend()
+            axes[i].grid(True, linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.output_folder, f"raw_spis_{station}.png"),
+                dpi=300, bbox_inches="tight")
+    plt.close()
 
+def plot_station_diagnostics(observed, predicted, time_index, station, spi, model, config):
+    """Grid with scatter, residuals, and rolling error for one SPI+model."""
+    fig, axes = plt.subplots(1, 3, figsize=(18,5))
+
+    # Scatter
+    axes[0].scatter(observed, predicted, alpha=0.5, edgecolor="k")
+    min_val, max_val = min(observed.min(), predicted.min()), max(observed.max(), predicted.max())
+    axes[0].plot([min_val, max_val], [min_val, max_val], "r--")
+    axes[0].set_title("Scatter")
+    axes[0].set_xlabel("Observed")
+    axes[0].set_ylabel("Predicted")
+
+    # Residuals
+    residuals = observed - predicted
+    sns.histplot(residuals, kde=True, bins=30, color="purple", ax=axes[1])
+    axes[1].axvline(0, color="red", linestyle="--")
+    axes[1].set_title("Residuals")
+
+    # Rolling RMSE
+    errors = (observed - predicted)**2
+    rolling_rmse = np.sqrt(pd.Series(errors, index=time_index).rolling(12).mean())
+    rolling_rmse.plot(ax=axes[2], color="blue", lw=1.5)
+    axes[2].set_title("Rolling 12-mo RMSE")
+
+    fig.suptitle(f"{station} — {spi} ({model})", fontsize=14, weight="bold")
+    plt.tight_layout(rect=[0,0,1,0.95])
+    outfile = os.path.join(config.output_folder, f"diag_{station}_{spi}_{model}.png")
+    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.close()
 def plot_scatter(observed, predicted, station, spi, model, config):
     plt.figure(figsize=(6,6))
     plt.scatter(observed, predicted, alpha=0.5, edgecolor="k")
@@ -685,7 +730,7 @@ def main():
         df = pd.read_csv(file, parse_dates=["ds"])
         df["ds"] = pd.to_datetime(df["ds"])
         df = df.set_index("ds").asfreq("MS").reset_index()
-        plot_raw_data(df, station, config)
+        plot_raw_station_data(df, station, config)
 
         last_date = df['ds'].max()
         config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
@@ -774,9 +819,10 @@ def main():
                 metrics = calculate_metrics(observed, predicted)
 
 
-                plot_scatter(observed, predicted, station, spi, model_name, config)
-                plot_residual_distribution(observed, predicted, station, spi, model_name, config)
-                plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
+                # plot_scatter(observed, predicted, station, spi, model_name, config)
+                # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
+                # plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
+                plot_station_diagnostics(observed, predicted, test_raw.time_index, station, spi, model_name, config)
 
                 # Refit model on full historical data
                 model.fit(hist_scaled
