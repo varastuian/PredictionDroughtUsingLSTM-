@@ -19,6 +19,30 @@ import pywt
 from darts.utils.statistics import remove_seasonality
 
 
+class ForecastConfig:
+    """Configuration class for forecasting parameters"""
+    def __init__(self):
+        self.SEED = 42
+        self.horizon =  3
+        self.num_epochs = 350
+        # self.num_epochs = 1
+        self.input_folder = "./Data/python_spi"
+        self.output_folder = "./Results/r19"
+        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
+        self.train_test_split = 0.8
+        self.lstm_hidden_dim = 64
+        # self.lstm_hidden_dim = 1
+        self.lstm_dropout = 0.0
+        self.lstm_layers = 2
+        # self.lstm_layers = 1
+        
+        # Create output directory
+        os.makedirs(self.output_folder, exist_ok=True)
+
+        np.random.seed(self.SEED)
+
+
 def plot_raw_data(df, station, config):
     """Plot raw time series data (SPI, precipitation, temperature)."""
     plt.figure(figsize=(16,8))
@@ -384,29 +408,6 @@ def plot_heatmaps(station, results, outfile):
     plt.close()
 
 
-class ForecastConfig:
-    """Configuration class for forecasting parameters"""
-    def __init__(self):
-        self.SEED = 42
-        self.horizon =  1
-        # self.num_epochs = 350
-        self.num_epochs = 1
-        self.input_folder = "./Data/maindata"
-        self.output_folder = "./Results/r18"
-        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
-        self.train_test_split = 0.8
-        self.lstm_hidden_dim = 64
-        # self.lstm_hidden_dim = 1
-        self.lstm_dropout = 0.0
-        self.lstm_layers = 2
-        # self.lstm_layers = 1
-        
-        # Create output directory
-        os.makedirs(self.output_folder, exist_ok=True)
-
-        np.random.seed(self.SEED)
-
 
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
@@ -420,7 +421,6 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     # cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
     cyc_cov = month_cov
     return cyc_cov
-
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     
