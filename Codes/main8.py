@@ -24,10 +24,10 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        self.num_epochs = 350
-        # self.num_epochs = 1
+        # self.num_epochs = 350
+        self.num_epochs = 1
         self.input_folder = "./Data/python_spi"
-        self.output_folder = "./Results/r19"
+        self.output_folder = "./Results/r20"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
@@ -835,6 +835,19 @@ def main():
                     "series": hist
                 }
 
+                # Add trend line for forecast
+                forecast_df = forecast.to_dataframe()
+                x = np.arange(len(forecast_df))
+                y = forecast_df.iloc[:, 0].values
+
+                # Fit linear trend
+                coef = np.polyfit(x, y, 1)
+                trend = np.polyval(coef, x)
+
+                # Plot trend line
+                plt.plot(forecast_df.index, trend, label="Trend Line", linestyle="--")
+
+
                 model_metrics.append(res)
                 all_results.append({
                     "station": station,
@@ -846,6 +859,7 @@ def main():
             if best_model:
                 best_results.append(best_model)
                 # plot_seasonal_cycle(best_model["series"], best_model["forecast"], station, best_model["spi"], config)
+
 
         # Save plots for this station
         if best_results:
