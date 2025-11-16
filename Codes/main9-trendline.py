@@ -24,10 +24,10 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        # self.num_epochs = 350
-        self.num_epochs = 1
+        self.num_epochs = 350
+        # self.num_epochs = 1
         self.input_folder = "./Data/python_spi"
-        self.output_folder = "./Results/r20"
+        self.output_folder = "./Results/r22"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
@@ -507,6 +507,9 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
                               )
     fc = scaler.inverse_transform(fc_scaled)
 
+    # Clip negative precipitation to 0
+    if col == "precip":
+        fc = fc.map(lambda x: np.clip(x, 0, None))
 
     return series, fc
 
@@ -682,13 +685,14 @@ def main():
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-
+        if station != "40700":
+            continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
         df["ds"] = pd.to_datetime(df["ds"])
         df = df.set_index("ds").asfreq("MS").reset_index()
-        plot_raw_data(df, station, config)
+        # plot_raw_data(df, station, config)
 
         last_date = df['ds'].max()
         config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
@@ -702,6 +706,8 @@ def main():
 
         best_results = []
         for spi in config.SPI:
+            if spi != "SPI_6":
+                continue
             model_metrics = []
 
             # Prepare data
@@ -716,6 +722,8 @@ def main():
 
 
             for model_name in config.models_to_test:
+                if model_name != "LSTM":
+                    continue
                 print(f"Running: {station} {spi} {model_name}")
                             
                 # Split data
@@ -777,9 +785,9 @@ def main():
                 metrics = calculate_metrics(observed, predicted)
 
 
-                plot_scatter(observed, predicted, station, spi, model_name, config)
-                plot_residual_distribution(observed, predicted, station, spi, model_name, config)
-                plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
+                # plot_scatter(observed, predicted, station, spi, model_name, config)
+                # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
+                # plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
 
                 # Refit model on full historical data
                 model.fit(hist_scaled
@@ -824,14 +832,60 @@ def main():
                 forecast_df = forecast.to_dataframe()
                 x = np.arange(len(forecast_df))
                 y = forecast_df.iloc[:, 0].values
+            
 
-                # Fit linear trend
+                # # Fit linear trend
+                # coef = np.polyfit(x, y, 1)
+                # trend = np.polyval(coef, x)
+
+                # # Plot trend line
+                # plt.plot(forecast_df.index, trend, label="Trend Line", linestyle="--")
+                dates = forecast_df.index
+
+                # ---------------------------------------------------
+                # 1) GLOBAL LINEAR TREND (whole forecast)
+                # ---------------------------------------------------
                 coef = np.polyfit(x, y, 1)
-                trend = np.polyval(coef, x)
+                global_trend = np.polyval(coef, x)
 
-                # Plot trend line
-                plt.plot(forecast_df.index, trend, label="Trend Line", linestyle="--")
+                plt.plot(
+                    dates,
+                    global_trend,
+                    label="Global Trend (2023–2099)",
+                    linestyle="--",
+                    linewidth=2,
+                    color="blue",
+                )
 
+                # ---------------------------------------------------
+                # 2) DECADE TREND LINES
+                # ---------------------------------------------------
+                decade_length = 120  # 120 months = 10 years
+                n = len(y)
+
+                decade_start_idx = list(range(0, n, decade_length))
+
+                for start in decade_start_idx:
+                    end = min(start + decade_length, n)
+
+                    # Extract decade slice
+                    x_dec = x[start:end]
+                    y_dec = y[start:end]
+                    date_dec = dates[start:end]
+
+                    # Fit trend line for this decade
+                    coef_dec = np.polyfit(x_dec, y_dec, 1)
+                    trend_dec = np.polyval(coef_dec, x_dec)
+
+                    # Plot decade trend line
+                    plt.plot(
+                        date_dec,
+                        trend_dec,
+                        linestyle="-",
+                        linewidth=2,
+                        alpha=0.9,
+                        label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}",
+                    )
 
                 
                 outfile = os.path.join(config.output_folder, f"{station} {spi}_{model_name}.png")
@@ -864,21 +918,21 @@ def main():
 
 
         # Save plots for this station
-        if best_results:
-            plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
-            plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
+        # if best_results:
+        #     plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
+        #     plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
             
        
     
-    # Save metrics and create Taylor diagrams
-    if all_results:
-        metrics_df = pd.DataFrame(all_results)
-        metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
+    # # Save metrics and create Taylor diagrams
+    # if all_results:
+    #     metrics_df = pd.DataFrame(all_results)
+    #     metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
         
-        for station in metrics_df["station"].unique():
-            taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
-        plot_metric_boxplots(metrics_df, config)
-        plot_model_ranking(metrics_df, config)
+    #     for station in metrics_df["station"].unique():
+    #         taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
+    #     plot_metric_boxplots(metrics_df, config)
+    #     plot_model_ranking(metrics_df, config)
 
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
