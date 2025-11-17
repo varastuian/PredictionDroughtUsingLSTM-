@@ -706,8 +706,8 @@ def main():
 
         best_results = []
         for spi in config.SPI:
-            if spi != "SPI_6":
-                continue
+            # if spi != "SPI_6":
+            #     continue
             model_metrics = []
 
             # Prepare data
@@ -722,8 +722,8 @@ def main():
 
 
             for model_name in config.models_to_test:
-                if model_name != "LSTM":
-                    continue
+                # if model_name != "LSTM":
+                #     continue
                 print(f"Running: {station} {spi} {model_name}")
                             
                 # Split data
@@ -847,15 +847,27 @@ def main():
                 # ---------------------------------------------------
                 coef = np.polyfit(x, y, 1)
                 global_trend = np.polyval(coef, x)
+                m_global, b_global = coef[0], coef[1]     # slope & intercept
 
                 plt.plot(
                     dates,
                     global_trend,
-                    label="Global Trend (2023–2099)",
+                    label=f"Global Trend (y = {m_global:.4f}x + {b_global:.4f})",
                     linestyle="--",
                     linewidth=2,
                     color="blue",
                 )
+
+                # Print global trend equation at top-left
+                plt.text(
+                    0.0, 0.195,
+                    f"Global Trend: y = {m_global:.4f}x + {b_global:.4f}",
+                    transform=plt.gca().transAxes,
+                    fontsize=10,
+                    color="blue",
+                    verticalalignment="top"
+                )
+
 
                 # ---------------------------------------------------
                 # 2) DECADE TREND LINES
@@ -865,7 +877,9 @@ def main():
 
                 decade_start_idx = list(range(0, n, decade_length))
 
-                for start in decade_start_idx:
+                y_min, y_max = np.min(y), np.max(y)
+                text_y = y_max
+                for i, start in enumerate(decade_start_idx):
                     end = min(start + decade_length, n)
 
                     # Extract decade slice
@@ -877,6 +891,8 @@ def main():
                     coef_dec = np.polyfit(x_dec, y_dec, 1)
                     trend_dec = np.polyval(coef_dec, x_dec)
 
+                    m_dec, b_dec = coef_dec[0], coef_dec[1]
+
                     # Plot decade trend line
                     plt.plot(
                         date_dec,
@@ -884,8 +900,18 @@ def main():
                         linestyle="-",
                         linewidth=2,
                         alpha=0.9,
-                        label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}",
+                        label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
                     )
+
+                    # Write equation for each decade (stack vertically)
+                    plt.text(
+                        date_dec[0],     # x location based on decade start
+                        text_y - i * (0.05 * (y_max - y_min)),  # slight downward offset for each line
+                        f"{date_dec[0].year}-{date_dec[-1].year}:  y = {m_dec:.4f}x + {b_dec:.4f}",
+                        fontsize=9,
+                        color="black",
+                    )
+
 
                 
                 outfile = os.path.join(config.output_folder, f"{station} {spi}_{model_name}.png")
