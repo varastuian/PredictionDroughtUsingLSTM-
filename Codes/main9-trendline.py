@@ -23,9 +23,9 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon =  3
-        self.num_epochs = 350
-        # self.num_epochs = 1
+        self.horizon =  6
+        # self.num_epochs = 350
+        self.num_epochs = 50
         self.input_folder = "./Data/python_spi"
         self.output_folder = "./Results/r22"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
@@ -422,7 +422,7 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     cyc_cov = month_cov
     return cyc_cov
 
-def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
+def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 2) -> np.ndarray:
     
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
     # Universal threshold based on noise estimate
@@ -685,8 +685,8 @@ def main():
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        if station != "40700":
-            continue
+        # if station != "40700":
+        #     continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
@@ -706,8 +706,8 @@ def main():
 
         best_results = []
         for spi in config.SPI:
-            if spi != "SPI_6":
-                continue
+            # if spi != "SPI_6":
+            #     continue
             model_metrics = []
 
             # Prepare data
@@ -722,8 +722,8 @@ def main():
 
 
             for model_name in config.models_to_test:
-                if model_name != "LSTM":
-                    continue
+                # if model_name != "LSTM":
+                #     continue
                 print(f"Running: {station} {spi} {model_name}")
                             
                 # Split data
@@ -785,11 +785,13 @@ def main():
                 metrics = calculate_metrics(observed, predicted)
 
 
-                # plot_scatter(observed, predicted, station, spi, model_name, config)
+                plot_scatter(observed, predicted, station, spi, model_name, config)
                 # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
                 # plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
-
+                
+                #==========================================
                 # Refit model on full historical data
+                #==========================================
                 model.fit(hist_scaled
                 , past_covariates=hist_cov_scaled
                 )
@@ -851,7 +853,7 @@ def main():
                 plt.plot(
                     dates,
                     global_trend,
-                    label="Global Trend (2023–2099)",
+                    label="Global Trend",
                     linestyle="--",
                     linewidth=2,
                     color="blue",
