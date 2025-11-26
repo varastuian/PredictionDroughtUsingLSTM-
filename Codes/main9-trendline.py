@@ -24,10 +24,11 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  6
+        self.windows_size = 12
         # self.num_epochs = 350
         self.num_epochs = 50
         self.input_folder = "./Data/python_spi"
-        self.output_folder = "./Results/r22"
+        self.output_folder = "./Results/r23"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
@@ -717,15 +718,10 @@ def main():
             hist = TimeSeries.from_dataframe(df_spi, 'ds', spi)
             
 
-            window_size = 12
-
-
             raw_hist = hist.copy()
 
 
             for model_name in config.models_to_test:
-                # if model_name != "LSTM":
-                #     continue
                 # if model_name != "LSTM":
                 #     continue
                 print(f"Running: {station} {spi} {model_name}")
@@ -813,49 +809,43 @@ def main():
                     hist_scaled = scaler.inverse_transform(hist_scaled)
 
                 # Plot results
-                plt.figure(figsize=(16, 6))
-                plt.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
-                plt.plot(pred.time_index, predicted, label="Predicted", lw=0.4, color="red", linestyle="--")
-                plt.plot(forecast.time_index, forecast.values(), label="Forecast", lw=0.6, color="green")
-                plt.title(f"{station} {spi} {model_name} Forecast till 2099")
-                plt.xlabel("Date")
-                plt.ylabel(spi)
-                plt.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
-                plt.legend()
-                plt.grid(True)
-                
-                # Add metrics text box
+                fig, ax = plt.subplots(figsize=(16, 6))
+
+                ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
+                ax.plot(pred.time_index, predicted, label="Predicted", lw=0.4,
+                        color="red", linestyle="--")
+                ax.plot(forecast.time_index, forecast.values(), label="Forecast",
+                        lw=0.6, color="green")
+
+                ax.set_title(f"{station} {spi} {model_name} Forecast till 2099")
+                ax.set_xlabel("Date")
+                ax.set_ylabel(spi)
+                ax.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
+                ax.grid(True)
+                ax.legend()
+
+                # ----------------------- Metrics box -----------------------
                 metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
-                plt.gca().text(
+                ax.text(
                     0.02, 0.95, metrics_text,
-                    transform=plt.gca().transAxes,
+                    transform=ax.transAxes,
                     fontsize=10,
                     verticalalignment="top",
-                    bbox=dict(boxstyle="round,pad=0.3", edgecolor="black", facecolor="white", alpha=0.7)
+                    bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",
+                            facecolor="white", alpha=0.7)
                 )
 
-                # Add trend line for forecast
+                # ----------------------- Global trend line -----------------------
                 forecast_df = forecast.to_dataframe()
                 x = np.arange(len(forecast_df))
                 y = forecast_df.iloc[:, 0].values
-            
-
-                # # Fit linear trend
-                # coef = np.polyfit(x, y, 1)
-                # trend = np.polyval(coef, x)
-
-                # # Plot trend line
-                # plt.plot(forecast_df.index, trend, label="Trend Line", linestyle="--")
                 dates = forecast_df.index
 
-                # ---------------------------------------------------
-                # 1) GLOBAL LINEAR TREND (whole forecast)
-                # ---------------------------------------------------
                 coef = np.polyfit(x, y, 1)
                 global_trend = np.polyval(coef, x)
-                m_global, b_global = coef[0], coef[1]     # slope & intercept
+                m_global, b_global = coef
 
-                plt.plot(
+                ax.plot(
                     dates,
                     global_trend,
                     label="Global Trend",
@@ -864,43 +854,40 @@ def main():
                     color="blue",
                 )
 
-                # Print global trend equation at top-left
-                plt.text(
-                    0.0, 0.195,
-                    f"Global Trend: y = {m_global:.4f}x + {b_global:.4f}",
-                    transform=plt.gca().transAxes,
+                # --- Place trend equation bottom-right near the line ---
+                y_last = global_trend[-1]
+
+                # Offsets based on visible range
+                x_offset = (dates[-1] - dates[0]) * 0.03
+                y_offset = (max(global_trend) - min(global_trend)) * -0.05
+
+                equation = f"y = {m_global:.4f}x + {b_global:.4f}"
+
+                ax.annotate(
+                    equation,
+                    xy=(dates[-1], y_last),
+                    xytext=(dates[-1] + x_offset, y_last + y_offset),
                     fontsize=10,
                     color="blue",
-                    verticalalignment="top"
+                    verticalalignment="top",
+                    horizontalalignment="left",
+                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
                 )
 
-
-                # ---------------------------------------------------
-                # 2) DECADE TREND LINES
-                # ---------------------------------------------------
-                decade_length = 120  # 120 months = 10 years
+                # ----------------------- Decade trend lines -----------------------
+                decade_length = 120  # 10 years
                 n = len(y)
 
-                decade_start_idx = list(range(0, n, decade_length))
-
-                y_min, y_max = np.min(y), np.max(y)
-                text_y = y_max
-                for i, start in enumerate(decade_start_idx):
+                for start in range(0, n, decade_length):
                     end = min(start + decade_length, n)
-
-                    # Extract decade slice
                     x_dec = x[start:end]
                     y_dec = y[start:end]
                     date_dec = dates[start:end]
 
-                    # Fit trend line for this decade
                     coef_dec = np.polyfit(x_dec, y_dec, 1)
                     trend_dec = np.polyval(coef_dec, x_dec)
 
-                    m_dec, b_dec = coef_dec[0], coef_dec[1]
-
-                    # Plot decade trend line
-                    plt.plot(
+                    ax.plot(
                         date_dec,
                         trend_dec,
                         linestyle="-",
@@ -909,20 +896,14 @@ def main():
                         label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
                     )
 
-                    # Write equation for each decade (stack vertically)
-                    plt.text(
-                        date_dec[0],     # x location based on decade start
-                        text_y - i * (0.05 * (y_max - y_min)),  # slight downward offset for each line
-                        f"{date_dec[0].year}-{date_dec[-1].year}:  y = {m_dec:.4f}x + {b_dec:.4f}",
-                        fontsize=9,
-                        color="black",
-                    )
+                ax.legend()
 
+                # ----------------------- Save -----------------------
+                outfile = os.path.join(config.output_folder,
+                                    f"{station} {spi}_{model_name}.png")
+                fig.savefig(outfile, dpi=300, bbox_inches="tight")
+                plt.close()
 
-                
-                outfile = os.path.join(config.output_folder, f"{station} {spi}_{model_name}.png")
-                plt.savefig(outfile, dpi=300, bbox_inches="tight")
-                plt.close() 
                 res = {
                     "spi": spi,
                     "model": model_name,
