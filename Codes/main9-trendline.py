@@ -23,18 +23,18 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon =  6
-        self.windows_size = 12
-        # self.num_epochs = 350
-        self.num_epochs = 50
+        self.horizon =  3
+        self.window_size = 12
+        self.num_epochs = 170
+        # self.num_epochs = 50
         self.input_folder = "./Data/python_spi"
-        self.output_folder = "./Results/r23"
+        self.output_folder = "./Results/r32"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
-        # self.lstm_hidden_dim = 1
-        self.lstm_dropout = 0.0
+        # self.lstm_hidden_dim = 32
+        self.lstm_dropout = 0.2
         self.lstm_layers = 2
         # self.lstm_layers = 1
         
@@ -613,32 +613,32 @@ def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_co
 
     return train_denoised, test_denoised,hist_denoised, train_cov_denoised, test_cov_denoised,hist_cov_denoised,full_cov_denoised
 
-def create_model(model_name: str, window_size: int, config: ForecastConfig):
+def create_model(model_name: str, config: ForecastConfig):
     
     if model_name == "ExtraTrees":
         return XGBModel(
-            lags=window_size,
+            lags=config.window_size,
             output_chunk_length=config.horizon              
             ,lags_past_covariates=[-i for i in range(1,13)],
         )
     elif model_name == "RandomForest":
         return RandomForest(
             n_estimators=100,random_state=config.SEED,
-            lags=window_size, 
+            lags=config.window_size, 
             output_chunk_length=config.horizon                      
             ,lags_past_covariates=[-i for i in range(1,13)]
         )
     elif model_name == "SVR":
         return RegressionModel(
             model=SVR(kernel="rbf", C=1, gamma=0.01, epsilon=0.01),
-            lags=window_size, 
+            lags=config.window_size, 
             output_chunk_length=config.horizon           
             ,lags_past_covariates=[-i for i in range(1,13)]
         )
     elif model_name in ["LSTM","WTLSTM"] :
         return BlockRNNModel(
             model="LSTM", 
-            input_chunk_length=window_size, 
+            input_chunk_length=config.window_size, 
             output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
             dropout=config.lstm_dropout,
@@ -686,8 +686,8 @@ def main():
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        # if station != "40700":
-        #     continue
+        if station != "40700":
+            continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
@@ -707,7 +707,7 @@ def main():
 
         best_results = []
         for spi in config.SPI:
-            # if spi != "SPI_6":
+            # if spi != "SPI_1":
             #     continue
             # if spi != "SPI_6":
             #     continue
@@ -763,7 +763,7 @@ def main():
 
 
                 # Create and train model
-                model = create_model(model_name, window_size, config)
+                model = create_model(model_name, config)
                 
                 
                 model.fit(train_scaled
@@ -808,15 +808,33 @@ def main():
                     forecast = scaler.inverse_transform(forecast)
                     hist_scaled = scaler.inverse_transform(hist_scaled)
 
+                metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
+
+
+                fig, ax = plt.subplots(figsize=(16, 6))
+                ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
+                ax.plot(pred.time_index,predicted,label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
+                ax.set_title(f"{station} {spi} - Test Prediction Quality")
+                ax.set_xlabel("Date")
+                ax.set_ylabel(spi)
+                ax.text(0.02, 0.95, metrics_text,transform=ax.transAxes,fontsize=10,verticalalignment="top",
+                            bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",facecolor="white", alpha=0.7))
+                ax.axhline(-1.5, color="black", linestyle="--", alpha=0.5)
+                ax.axvspan(pred.time_index.min(), pred.time_index.max(),color='gray', alpha=0.1, label="Test period")
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+                plt.tight_layout()
+                outfile = os.path.join(config.output_folder,f"historical-{station} {spi}_{model_name}.png")
+                fig.savefig(outfile, dpi=300, bbox_inches="tight")
+                plt.close()                    
+
                 # Plot results
                 fig, ax = plt.subplots(figsize=(16, 6))
-
                 ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
                 ax.plot(pred.time_index, predicted, label="Predicted", lw=0.4,
                         color="red", linestyle="--")
                 ax.plot(forecast.time_index, forecast.values(), label="Forecast",
                         lw=0.6, color="green")
-
                 ax.set_title(f"{station} {spi} {model_name} Forecast till 2099")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
@@ -824,8 +842,6 @@ def main():
                 ax.grid(True)
                 ax.legend()
 
-                # ----------------------- Metrics box -----------------------
-                metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
                 ax.text(
                     0.02, 0.95, metrics_text,
                     transform=ax.transAxes,
@@ -866,7 +882,7 @@ def main():
                 ax.annotate(
                     equation,
                     xy=(dates[-1], y_last),
-                    xytext=(dates[-1] + x_offset, y_last + y_offset),
+                    xytext=(dates[-1] - x_offset, y_last + y_offset),
                     fontsize=10,
                     color="blue",
                     verticalalignment="top",
@@ -875,7 +891,7 @@ def main():
                 )
 
                 # ----------------------- Decade trend lines -----------------------
-                decade_length = 120  # 10 years
+                decade_length = 240  # 10 years
                 n = len(y)
 
                 for start in range(0, n, decade_length):
@@ -893,7 +909,7 @@ def main():
                         linestyle="-",
                         linewidth=2,
                         alpha=0.9,
-                        label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
+                        # label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
                     )
 
                 ax.legend()
@@ -909,7 +925,7 @@ def main():
                     "model": model_name,
                     **metrics,
                     "horizon": config.horizon,
-                    "window_size": window_size,
+                    "window_size": config.window_size,
                     "epoch": config.num_epochs,
                     "forecast": forecast,
                     "pred": pred,
@@ -931,21 +947,21 @@ def main():
 
 
         # Save plots for this station
-        # if best_results:
-        #     plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
-        #     plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
+        if best_results:
+            plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
+            plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
             
        
     
     # # Save metrics and create Taylor diagrams
-    # if all_results:
-    #     metrics_df = pd.DataFrame(all_results)
-    #     metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
+    if all_results:
+        metrics_df = pd.DataFrame(all_results)
+        metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
         
-    #     for station in metrics_df["station"].unique():
-    #         taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
-    #     plot_metric_boxplots(metrics_df, config)
-    #     plot_model_ranking(metrics_df, config)
+        for station in metrics_df["station"].unique():
+            taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
+        # plot_metric_boxplots(metrics_df, config)
+        # plot_model_ranking(metrics_df, config)
 
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
