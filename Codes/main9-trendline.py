@@ -25,10 +25,9 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 12
-        self.num_epochs = 170
+        self.num_epochs = 370
         # self.num_epochs = 50
         self.input_folder = "./Data/python_spi"
-        self.output_folder = "./Results/r32"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
@@ -37,8 +36,7 @@ class ForecastConfig:
         self.lstm_dropout = 0.2
         self.lstm_layers = 2
         # self.lstm_layers = 1
-        
-        # Create output directory
+        self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-layer2-dropout0.2-horizon2"
         os.makedirs(self.output_folder, exist_ok=True)
 
         np.random.seed(self.SEED)
