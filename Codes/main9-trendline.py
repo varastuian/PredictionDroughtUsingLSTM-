@@ -9,7 +9,7 @@ from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from scipy.stats import pearsonr
 from darts import TimeSeries
-from darts.models import BlockRNNModel, RegressionModel,RandomForest,XGBModel
+from darts.models import BlockRNNModel, RegressionModel,RandomForest,XGBModel,RNNModel
 # from darts.metrics import mae, mape, rmse
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
 from darts.dataprocessing.transformers import Scaler
@@ -24,14 +24,14 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        self.window_size = 12
-        self.num_epochs = 190
+        self.window_size = 14
+        self.num_epochs = 300
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
-        self.lstm_dropout = 0.2
+        self.lstm_dropout = 0.01
         self.lstm_layers = 2
         self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}-d{self.lstm_dropout}-h{self.horizon}"
         os.makedirs(self.output_folder, exist_ok=True)
@@ -407,16 +407,13 @@ def plot_heatmaps(station, results, outfile):
 
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
-    # month_cov = datetime_attribute_timeseries(time_index, "month", one_hot=True)
-    month_cov = datetime_attribute_timeseries(time_index, "month")
-    year_cov = datetime_attribute_timeseries(time_index, "year")
-    
-    year_scaled = (year_cov.values() - year_cov.values().min()) / (year_cov.values().max() - year_cov.values().min())
-    year_scaled_ts = TimeSeries.from_times_and_values(time_index, year_scaled)
-    
-    # cyc_cov = month_cov.stack(year_cov).stack(year_scaled_ts)
-    cyc_cov = month_cov
-    return cyc_cov
+    year_series = datetime_attribute_timeseries(time_index, "year")
+    year_series = Scaler().fit_transform(year_series)
+
+    month_series  = datetime_attribute_timeseries(time_index, "month", one_hot=True)
+    # month_series  = datetime_attribute_timeseries(time_index, "month")
+    covariates = year_series.stack(month_series)
+    return covariates
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     
@@ -462,44 +459,37 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
     scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
 
-
-    cyc_cov = build_cyclic_covariates(series.time_index)
-    cov_scaler = Scaler()
-    cyc_cov = cov_scaler.fit_transform(cyc_cov)
-
-    model = BlockRNNModel(
-        model='LSTM',
-        input_chunk_length=config.window_size,
-        output_chunk_length=config.horizon,
-        n_epochs=config.num_epochs,
-        # n_epochs=1,
-        dropout=config.lstm_dropout,
-        hidden_dim=config.lstm_hidden_dim,
-        n_rnn_layers=config.lstm_layers,
-
-        random_state=config.SEED
-    )
-
-    model.fit(series_scaled
-            #   , past_covariates=cyc_cov
-              )
-
-
-
-    # Create future covariates for prediction
-    future_time_idx = pd.date_range(
+    full_time_idx = pd.date_range(
         start=series.time_index[0], 
         periods=len(series) + config.months_to_2099, 
         freq="MS"
     )
 
-    cyc_cov_future = build_cyclic_covariates(future_time_idx)
+    cyc_cov = build_cyclic_covariates(full_time_idx)
 
-    cyc_cov_future_scaled = cov_scaler.transform(cyc_cov_future)
 
-    # Predict
-    fc_scaled = model.predict(n=config.months_to_2099, series=series_scaled
-                            #   , past_covariates=cyc_cov_future_scaled
+    model = RNNModel(
+        model='LSTM',
+        input_chunk_length=config.window_size,
+        output_chunk_length=config.horizon,
+        n_epochs=config.num_epochs,
+        optimizer_kwargs={"lr": 1e-3},
+        training_length=20,
+        force_reset=True,
+        batch_size=16,
+        dropout=config.lstm_dropout,
+        hidden_dim=config.lstm_hidden_dim,
+        n_rnn_layers=config.lstm_layers,
+        random_state=config.SEED
+    )
+
+    model.fit(series_scaled
+              , future_covariates=cyc_cov
+              )
+
+
+    fc_scaled = model.predict(n=config.months_to_2099
+                              , future_covariates=cyc_cov
                               )
     fc = scaler.inverse_transform(fc_scaled)
 
@@ -509,33 +499,11 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
 
     return series, fc
 
-def forecast_precip_to_2099(df: pd.DataFrame, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
-    df = df.copy()
-
-    # Stage 1: Wet/Dry
-    df['wet_day'] = (df['precip'] > 0).astype(int)
-    hist_wet, fc_wet = forecast_covariate_to_2099(df,  "wet_day", config)
-
-    # Stage 2: Positive precipitation (log1p)
-    df['log_precip'] = np.log1p(df['precip'])  # keep all months
-    hist_log, fc_log = forecast_covariate_to_2099(df, "log_precip", config)
-
-    # Convert back
-    fc_intensity = TimeSeries.from_times_and_values(fc_log.time_index, np.expm1(fc_log.values().flatten()))
-
-    # Align time indices
-    future_idx = fc_wet.time_index
-    wet_flag = (fc_wet.values().flatten() > 0.5).astype(float)
-    fc_precip_final = TimeSeries.from_times_and_values(future_idx, wet_flag * fc_intensity.values().flatten())
-
-    hist_precip = TimeSeries.from_dataframe(df, "ds", ["precip"])
-    return hist_precip, fc_precip_final
-
 def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
 
     # Forecast temperature and precipitation
     hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
-    hist_pr, fc_pr = forecast_precip_to_2099(df, config)
+    # hist_pr, fc_pr = forecast_precip_to_2099(df, config)
     plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
 
 
@@ -553,15 +521,7 @@ def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
         "precip": fc_pr.values().flatten()
     })
     future_cov = TimeSeries.from_dataframe(future_df, "ds", ["tm_m", "precip"])
-
-    # Combine historical and future covariates
     full_cov = hist_cov.concatenate(future_cov)
-    cyc_cov = build_cyclic_covariates(full_cov.time_index)
-
-
-    # hist_cov = hist_cov.stack(cyc_cov.split_before(future_cov.start_time())[0])
-    # full_cov = full_cov.stack(cyc_cov)
-    
 
     return full_cov, hist_cov
 
