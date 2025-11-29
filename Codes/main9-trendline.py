@@ -25,18 +25,15 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 12
-        self.num_epochs = 370
-        # self.num_epochs = 50
+        self.num_epochs = 190
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
-        # self.lstm_hidden_dim = 32
         self.lstm_dropout = 0.2
         self.lstm_layers = 2
-        # self.lstm_layers = 1
-        self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-layer2-dropout0.2-horizon2"
+        self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}-d{self.lstm_dropout}-h{self.horizon}"
         os.makedirs(self.output_folder, exist_ok=True)
 
         np.random.seed(self.SEED)
@@ -421,7 +418,7 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     cyc_cov = month_cov
     return cyc_cov
 
-def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 2) -> np.ndarray:
+def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
     # Universal threshold based on noise estimate
@@ -456,12 +453,11 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
         "mape": mape_val
     }
 
-def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries]:
+def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfig):
     
     df = df.copy()
 
     series = TimeSeries.from_dataframe(df, 'ds', col)
-    window_size = 12
 
     scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
@@ -473,9 +469,10 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
 
     model = BlockRNNModel(
         model='LSTM',
-        input_chunk_length=window_size,
+        input_chunk_length=config.window_size,
         output_chunk_length=config.horizon,
-       n_epochs=config.num_epochs,
+        n_epochs=config.num_epochs,
+        # n_epochs=1,
         dropout=config.lstm_dropout,
         hidden_dim=config.lstm_hidden_dim,
         n_rnn_layers=config.lstm_layers,
@@ -538,7 +535,7 @@ def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
 
     # Forecast temperature and precipitation
     hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
-    # hist_pr, fc_pr = forecast_precip_to_2099(df, config)
+    hist_pr, fc_pr = forecast_precip_to_2099(df, config)
     plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
 
 
@@ -705,10 +702,8 @@ def main():
 
         best_results = []
         for spi in config.SPI:
-            # if spi != "SPI_1":
-            #     continue
-            # if spi != "SPI_6":
-            #     continue
+            if spi not in ["SPI_1","SPI_6"]:
+                continue
             model_metrics = []
 
             # Prepare data
@@ -720,8 +715,8 @@ def main():
 
 
             for model_name in config.models_to_test:
-                # if model_name != "LSTM":
-                #     continue
+                if model_name != "LSTM":
+                    continue
                 print(f"Running: {station} {spi} {model_name}")
                             
                 # Split data
@@ -783,7 +778,7 @@ def main():
                 metrics = calculate_metrics(observed, predicted)
 
 
-                plot_scatter(observed, predicted, station, spi, model_name, config)
+                # plot_scatter(observed, predicted, station, spi, model_name, config)
                 # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
                 # plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
                 
@@ -945,9 +940,9 @@ def main():
 
 
         # Save plots for this station
-        if best_results:
-            plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
-            plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
+        # if best_results:
+        #     plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
+        #     plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
             
        
     
