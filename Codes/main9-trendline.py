@@ -19,24 +19,6 @@ import pywt
 from darts.utils.statistics import remove_seasonality
 
 
-class ForecastConfig:
-    """Configuration class for forecasting parameters"""
-    def __init__(self):
-        self.SEED = 42
-        self.horizon =  3
-        self.window_size = 14
-        self.num_epochs = 300
-        self.input_folder = "./Data/python_spi"
-        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
-        self.train_test_split = 0.8
-        self.lstm_hidden_dim = 64
-        self.lstm_dropout = 0.01
-        self.lstm_layers = 2
-        self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}-d{self.lstm_dropout}-h{self.horizon}"
-        os.makedirs(self.output_folder, exist_ok=True)
-
-        np.random.seed(self.SEED)
 
 
 def plot_raw_data(df, station, config):
@@ -146,7 +128,7 @@ def plot_model_ranking(metrics_df, config):
     plt.close()
 
 
-def plot_covariate_forecasts(hist_ts, future_ts, covariate: str, config: ForecastConfig, color: str = "blue"):
+def plot_covariate_forecasts(hist_ts, future_ts, covariate: str, config, color: str = "blue"):
 
     plt.figure(figsize=(14, 6))
     plt.plot(hist_ts.time_index, hist_ts.values().flatten(), label=f"Historical {covariate}", color=color, lw=0.5)
@@ -450,7 +432,7 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
         "mape": mape_val
     }
 
-def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfig):
+def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     
     df = df.copy()
 
@@ -499,12 +481,12 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config: ForecastConfi
 
     return series, fc
 
-def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[TimeSeries, TimeSeries, TimeSeries]:
+def build_future_covariates(df: pd.DataFrame, config) :
 
     # Forecast temperature and precipitation
-    hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
+    # hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
     # hist_pr, fc_pr = forecast_precip_to_2099(df, config)
-    plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
+    # plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
 
 
     hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", config)
@@ -512,15 +494,13 @@ def build_future_covariates(df: pd.DataFrame, config: ForecastConfig) -> Tuple[T
         
         
     # Combine historical covariates
-    hist_cov = hist_tm.stack(hist_pr)
+    hist_cov = hist_tm
+    # .stack(hist_pr)
+    future_cov = fc_tm
+    # .stack(fc_pr)
 
-    # Create future covariates DataFrame
-    future_df = pd.DataFrame({
-        "ds": fc_tm.time_index,
-        "tm_m": fc_tm.values().flatten(),
-        "precip": fc_pr.values().flatten()
-    })
-    future_cov = TimeSeries.from_dataframe(future_df, "ds", ["tm_m", "precip"])
+
+    
     full_cov = hist_cov.concatenate(future_cov)
 
     return full_cov, hist_cov
@@ -568,7 +548,7 @@ def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_co
 
     return train_denoised, test_denoised,hist_denoised, train_cov_denoised, test_cov_denoised,hist_cov_denoised,full_cov_denoised
 
-def create_model(model_name: str, config: ForecastConfig):
+def create_model(model_name: str, config):
     
     if model_name == "ExtraTrees":
         return XGBModel(
@@ -591,11 +571,15 @@ def create_model(model_name: str, config: ForecastConfig):
             ,lags_past_covariates=[-i for i in range(1,13)]
         )
     elif model_name in ["LSTM","WTLSTM"] :
-        return BlockRNNModel(
+        return RNNModel(
             model="LSTM", 
             input_chunk_length=config.window_size, 
             output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
+            optimizer_kwargs={"lr": 1e-3},
+            training_length=20,
+            force_reset=True,
+            batch_size=16,
             dropout=config.lstm_dropout,
             n_rnn_layers=config.lstm_layers,
             hidden_dim=config.lstm_hidden_dim, 
@@ -631,6 +615,23 @@ def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dic
     return valid_models[best_idx]
 
 
+class ForecastConfig:
+    """Configuration class for forecasting parameters"""
+    def __init__(self):
+        self.SEED = 42
+        self.horizon =  3
+        self.window_size = 14
+        self.num_epochs = 1#300
+        self.input_folder = "./Data/python_spi"
+        self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
+        self.train_test_split = 0.8
+        self.lstm_hidden_dim = 64
+        self.lstm_dropout = 0.01
+        self.lstm_layers = 2
+        self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}-d{self.lstm_dropout}-h{self.horizon}"
+        os.makedirs(self.output_folder, exist_ok=True)
+        np.random.seed(self.SEED)
 
 def main():
     config = ForecastConfig()
@@ -656,6 +657,7 @@ def main():
 
         full_cov, hist_cov = build_future_covariates(df, config)
 
+
         raw_hist_cov = hist_cov.copy()
         raw_full_cov = full_cov.copy()
 
@@ -666,13 +668,9 @@ def main():
                 continue
             model_metrics = []
 
-            # Prepare data
             df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
             hist = TimeSeries.from_dataframe(df_spi, 'ds', spi)
-            
-
             raw_hist = hist.copy()
-
 
             for model_name in config.models_to_test:
                 if model_name != "LSTM":
@@ -682,7 +680,8 @@ def main():
                 # Split data
                 hist = raw_hist
                 hist_cov = raw_hist_cov.slice_intersect(hist)
-                full_cov = raw_full_cov.slice(hist.start_time(), full_cov.end_time())
+                full_cov = raw_full_cov
+                # .slice(hist.start_time(), full_cov.end_time())
                 train, test = hist.split_before(config.train_test_split)
                 train_cov, test_cov = hist_cov.split_before(config.train_test_split)
                 test_raw = test.copy()
@@ -720,12 +719,12 @@ def main():
                 
                 
                 model.fit(train_scaled
-                          , past_covariates=train_cov_scaled
+                          , future_covariates=train_cov_scaled
                           )
 
-                pred = model.predict(n=len(test), series=train_scaled
-                                     , past_covariates=hist_cov_scaled
-                                     )
+                pred = model.predict(n=len(test)
+                        , future_covariates=hist_cov_scaled
+                        )
              
                 # Inverse transform if scaled
                 if use_scaler:
@@ -746,15 +745,13 @@ def main():
                 # Refit model on full historical data
                 #==========================================
                 model.fit(hist_scaled
-                , past_covariates=hist_cov_scaled
+                , future_covariates=hist_cov_scaled
                 )
 
                 
                 # Make forecast
-                forecast = model.predict(
-                        n=config.months_to_2099,
-                        series=hist_scaled
-                        ,past_covariates=full_cov_scaled
+                forecast = model.predict(n=config.months_to_2099
+                        ,future_covariates=full_cov_scaled
                 )
                 
                 if scaler is not None:
