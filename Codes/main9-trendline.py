@@ -1,3 +1,4 @@
+import datetime
 import os
 import glob
 import numpy as np
@@ -453,8 +454,8 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     model = RNNModel(
         model='LSTM',
         input_chunk_length=config.window_size,
-        output_chunk_length=config.horizon,
-        n_epochs=config.num_epochs,
+        # output_chunk_length=config.horizon,
+        n_epochs=100,#config.num_epochs,
         optimizer_kwargs={"lr": 1e-3},
         training_length=20,
         force_reset=True,
@@ -574,7 +575,7 @@ def create_model(model_name: str, config):
         return RNNModel(
             model="LSTM", 
             input_chunk_length=config.window_size, 
-            output_chunk_length=config.horizon,
+            # output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
             optimizer_kwargs={"lr": 1e-3},
             training_length=20,
@@ -619,9 +620,9 @@ class ForecastConfig:
     """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon =  3
-        self.window_size = 14
-        self.num_epochs = 1#300
+        self.horizon =  1
+        self.window_size = 12
+        self.num_epochs = 140
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
@@ -629,7 +630,14 @@ class ForecastConfig:
         self.lstm_hidden_dim = 64
         self.lstm_dropout = 0.01
         self.lstm_layers = 2
-        self.output_folder = f"./Results/e{self.num_epochs}-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}-d{self.lstm_dropout}-h{self.horizon}"
+
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.output_folder = (
+            f"./Results/{ts}_e{self.num_epochs}"
+            f"-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}"
+            f"-d{self.lstm_dropout}-h{self.horizon}"
+        )
+
         os.makedirs(self.output_folder, exist_ok=True)
         np.random.seed(self.SEED)
 
@@ -664,7 +672,7 @@ def main():
 
         best_results = []
         for spi in config.SPI:
-            if spi not in ["SPI_1","SPI_6"]:
+            if spi not in ["SPI_6"]:
                 continue
             model_metrics = []
 
@@ -904,14 +912,14 @@ def main():
        
     
     # # Save metrics and create Taylor diagrams
-    if all_results:
-        metrics_df = pd.DataFrame(all_results)
-        metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
+    # if all_results:
+    #     metrics_df = pd.DataFrame(all_results)
+    #     metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
         
-        for station in metrics_df["station"].unique():
-            taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
-        # plot_metric_boxplots(metrics_df, config)
-        # plot_model_ranking(metrics_df, config)
+    #     for station in metrics_df["station"].unique():
+    #         taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
+    #     # plot_metric_boxplots(metrics_df, config)
+    #     # plot_model_ranking(metrics_df, config)
 
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
