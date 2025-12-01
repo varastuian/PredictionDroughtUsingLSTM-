@@ -12,6 +12,8 @@ from scipy.stats import pearsonr
 from darts import TimeSeries
 from darts.models import BlockRNNModel, RegressionModel,RandomForest,XGBModel,RNNModel
 # from darts.metrics import mae, mape, rmse
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
 from darts.dataprocessing.transformers import Scaler
 from darts.utils.likelihood_models import GaussianLikelihood
@@ -455,7 +457,7 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
         model='LSTM',
         input_chunk_length=config.window_size,
         # output_chunk_length=config.horizon,
-        n_epochs=100,#config.num_epochs,
+        n_epochs=1,#config.num_epochs,
         optimizer_kwargs={"lr": 1e-3},
         training_length=20,
         force_reset=True,
@@ -584,7 +586,16 @@ def create_model(model_name: str, config):
             dropout=config.lstm_dropout,
             n_rnn_layers=config.lstm_layers,
             hidden_dim=config.lstm_hidden_dim, 
-            random_state=config.SEED
+            random_state=config.SEED,
+            pl_trainer_kwargs={
+                "callbacks": [
+                    EarlyStopping(
+                        monitor="val_loss",
+                        patience=15,
+                        mode="min"
+                    )
+                ]
+            }
             # ,likelihood=GaussianLikelihood()
         )
     
@@ -622,7 +633,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  1
         self.window_size = 12
-        self.num_epochs = 140
+        self.num_epochs = 180
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
@@ -691,7 +702,12 @@ def main():
                 full_cov = raw_full_cov
                 # .slice(hist.start_time(), full_cov.end_time())
                 train, test = hist.split_before(config.train_test_split)
+                train, val = train.split_before(0.8)
+
+
                 train_cov, test_cov = hist_cov.split_before(config.train_test_split)
+                train_cov, val_cov = train_cov.split_before(0.8)
+
                 test_raw = test.copy()
                 if model_name == "WTLSTM":
                     train, test,hist, train_cov, test_cov,hist_cov,full_cov = prepare_wavelet_data(spi,train, test,hist, train_cov, test_cov,hist_cov,full_cov)
@@ -703,12 +719,12 @@ def main():
                 if use_scaler:
                     scaler = Scaler()
                     train_scaled = scaler.fit_transform(train)
-                    test_scaled = scaler.transform(test)
+                    val_scaled = scaler.transform(val)
                     hist_scaled = scaler.transform(hist)
                                         
                     cov_scaler = Scaler()
                     train_cov_scaled = cov_scaler.fit_transform(train_cov)
-                    # test_cov_scaled = cov_scaler.transform(test_cov)
+                    val_cov_scaled = cov_scaler.transform(val_cov)
                     hist_cov_scaled = cov_scaler.transform(hist_cov)
                     full_cov_scaled = cov_scaler.transform(full_cov)
                 else:
@@ -726,9 +742,17 @@ def main():
                 model = create_model(model_name, config)
                 
                 
-                model.fit(train_scaled
-                          , future_covariates=train_cov_scaled
-                          )
+                # model.fit(train_scaled
+                #           , future_covariates=train_cov_scaled
+                #           )
+                
+                model.fit(
+                    train_scaled,
+                    future_covariates=train_cov_scaled,
+                    val_series=val_scaled,
+                    val_future_covariates=val_cov_scaled,
+                )
+
 
                 pred = model.predict(n=len(test)
                         , future_covariates=hist_cov_scaled
@@ -752,9 +776,9 @@ def main():
                 #==========================================
                 # Refit model on full historical data
                 #==========================================
-                model.fit(hist_scaled
-                , future_covariates=hist_cov_scaled
-                )
+                # model.fit(hist_scaled
+                # , future_covariates=hist_cov_scaled
+                # )
 
                 
                 # Make forecast
