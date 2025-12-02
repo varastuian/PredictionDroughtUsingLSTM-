@@ -505,8 +505,6 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
     # month as numeric attribute (1..12) -> convert to sin/cos
     month_ts = datetime_attribute_timeseries(time_index, attribute="month").astype(float)
-    # convert month (1..12) -> sin/cos
-    # extract underlying dataframe and compute sin/cos
     df_month = month_ts.pd_dataframe(copy=True)
     df_month["month_sin"] = np.sin(2 * np.pi * df_month["month"] / 12.0)
     df_month["month_cos"] = np.cos(2 * np.pi * df_month["month"] / 12.0)
@@ -514,21 +512,21 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
     month_sin_cos_ts = TimeSeries.from_dataframe(df_month, time_index)
 
-    # stack year with month_sin_cos
     covariates = year_ts.stack(month_sin_cos_ts)
     return covariates
 
-
+# -------------------------------
+# Forecast single covariate to 2099
+# -------------------------------
 def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     
-    df = df.copy()
+    df_local = df.copy().sort_values("ds").reset_index(drop=True)
 
-    series = TimeSeries.from_dataframe(df, 'ds', col)
+    series = TimeSeries.from_dataframe(df_local, 'ds', col)
 
     scaler = Scaler()
     series_scaled = scaler.fit_transform(series)
 
-    train_series, val_series = series_scaled.split_before(0.85)
 
     full_time_idx = pd.date_range(
         start=series.time_index[0], 
@@ -537,7 +535,14 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     )
 
     cyc_cov = build_cyclic_covariates(full_time_idx)
-    train_cov, val_cov = cyc_cov.split_before(len(train_series))
+
+    split_point = int(len(series_scaled) * config.train_test_split)
+    train_end = series_scaled.time_index[split_point - 1]
+    train_series, val_series = series_scaled.split_before(train_end + pd.Timedelta(days=1))
+
+
+    cyc_cov_train = cyc_cov.slice(series_scaled.start_time(), train_series.end_time())
+    cyc_cov_val = cyc_cov.slice(val_series.start_time(), val_series.end_time())
 
     early_stop = EarlyStopping(
         monitor="val_loss",
@@ -565,17 +570,24 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     # model.fit(series_scaled
     #           , future_covariates=cyc_cov
     #           )
+    # model.fit(
+    #     train_series,
+    #     future_covariates=train_cov,
+    #     val_series=val_series,
+    #     val_past_covariates=val_cov
+    # )
     model.fit(
-        train_series,
-        future_covariates=train_cov,
+        series=train_series,
+        future_covariates=cyc_cov_train,
         val_series=val_series,
-        val_past_covariates=val_cov
-    )
+        val_future_covariates=cyc_cov_val,
+        )
 
-
-    fc_scaled = model.predict(n=config.months_to_2099
-                              , future_covariates=cyc_cov
-                              )
+    cyc_cov_for_forecast = cyc_cov.slice(series.end_time() + pd.Timedelta(days=1), cyc_cov.end_time())
+    fc_scaled = model.predict(n=config.months_to_2099, future_covariates=cyc_cov_for_forecast)
+    # fc_scaled = model.predict(n=config.months_to_2099
+    #                           , future_covariates=cyc_cov
+    #                           )
     fc = scaler.inverse_transform(fc_scaled)
 
     # Clip negative precipitation to 0
@@ -598,6 +610,24 @@ def build_future_covariates(df: pd.DataFrame, config) :
     # Combine historical covariates
     hist_cov = hist_tm.stack(hist_pr)
     future_cov = fc_tm.stack(fc_pr)
+
+    # build cyclic covariates for entire span (needed to combine with climate covariates)
+    start = hist_cov.start_time()
+    last_date = hist_pr.time_index[-1]
+    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
+    total_periods = len(hist_pr) + months_to_2099
+    full_time_idx = pd.date_range(start=start, periods=total_periods, freq="MS")
+    time_cov = build_cyclic_covariates(full_time_idx)
+
+
+    # split time_cov into historical and future parts
+    hist_time_cov = time_cov.slice(hist_cov.start_time(), hist_cov.end_time())
+    fut_time_cov = time_cov.slice(future_cov.start_time(), future_cov.end_time())
+
+
+    # stack climate covariates with time covariates for both historical and future
+    hist_cov = hist_cov.stack(hist_time_cov)
+    future_cov = future_cov.stack(fut_time_cov)
 
 
     
@@ -635,7 +665,7 @@ def create_model(model_name: str, config):
             # output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
             optimizer_kwargs={"lr": 1e-3},
-            training_length=20,
+            training_length=48,
             force_reset=True,
             batch_size=16,
             dropout=config.lstm_dropout,
@@ -660,8 +690,8 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        self.window_size = 14
-        self.num_epochs = 380
+        self.window_size = 24
+        self.num_epochs = 170
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
