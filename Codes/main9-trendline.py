@@ -389,16 +389,34 @@ def plot_heatmaps(station, results, outfile):
     plt.close()
 
 
+def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dict:
+    if weights is None:
+        weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
 
-def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
+    # Filter out None results
+    valid_models = [m for m in models if m is not None]
+    if not valid_models:
+        return None
 
-    year_series = datetime_attribute_timeseries(time_index, "year")
-    year_series = Scaler().fit_transform(year_series)
+    # Extract metric arrays
+    rmse_vals = np.array([m["rmse"] for m in valid_models])
+    crmse_vals = np.array([m["crmse"] for m in valid_models])
+    corr_vals = np.array([m["corr"] for m in valid_models])
 
-    month_series  = datetime_attribute_timeseries(time_index, "month", one_hot=True)
-    # month_series  = datetime_attribute_timeseries(time_index, "month")
-    covariates = year_series.stack(month_series)
-    return covariates
+    # Normalize metrics
+    rmse_norm = (rmse_vals - rmse_vals.min()) / (rmse_vals.max() - rmse_vals.min() + 1e-8)
+    crmse_norm = (crmse_vals - crmse_vals.min()) / (crmse_vals.max() - crmse_vals.min() + 1e-8)
+    corr_norm = (corr_vals - corr_vals.min()) / (corr_vals.max() - corr_vals.min() + 1e-8)
+
+    # Compute combined score (lower is better)
+    scores = (weights["rmse"] * rmse_norm + 
+              weights["crmse"] * crmse_norm - 
+              weights["corr"] * corr_norm)
+
+    best_idx = np.argmin(scores)
+    return valid_models[best_idx]
+
+
 
 def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     
@@ -408,105 +426,6 @@ def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) ->
     coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c for i, c in enumerate(coeffs)]
     denoised = pywt.waverec(coeffs_denoised, wavelet=wavelet)
     return denoised[:len(series)]
-
-def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, float]:
-
-    std_ref = np.std(observed, ddof=1)
-    std_sim = np.std(predicted, ddof=1)
-    corr_val = pearsonr(observed, predicted)[0]
-    rmse_val = np.sqrt(mean_squared_error(observed, predicted))
-    mae_val = mean_absolute_error(observed, predicted)
-    mape_val = np.mean(np.abs((observed - predicted) / observed)) * 100
-    
-    # Avoid division by zero in CRMSLE calculation
-    if std_ref > 0 and std_sim > 0:
-        crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2 * std_ref * std_sim * corr_val)
-    else:
-        crmse_val = np.nan
-        print("Cannot calculate CRMSE due to zero standard deviation")
-    
-    return {
-        "std_ref": std_ref,
-        "std_model": std_sim,
-        "rmse": rmse_val,
-        "corr": corr_val,
-        "crmse": crmse_val,
-        "mae": mae_val,
-        "mape": mape_val
-    }
-
-def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
-    
-    df = df.copy()
-
-    series = TimeSeries.from_dataframe(df, 'ds', col)
-
-    scaler = Scaler()
-    series_scaled = scaler.fit_transform(series)
-
-    full_time_idx = pd.date_range(
-        start=series.time_index[0], 
-        periods=len(series) + config.months_to_2099, 
-        freq="MS"
-    )
-
-    cyc_cov = build_cyclic_covariates(full_time_idx)
-
-
-    model = RNNModel(
-        model='LSTM',
-        input_chunk_length=config.window_size,
-        # output_chunk_length=config.horizon,
-        n_epochs=1,#config.num_epochs,
-        optimizer_kwargs={"lr": 1e-3},
-        training_length=20,
-        force_reset=True,
-        batch_size=16,
-        dropout=config.lstm_dropout,
-        hidden_dim=config.lstm_hidden_dim,
-        n_rnn_layers=config.lstm_layers,
-        random_state=config.SEED
-    )
-
-    model.fit(series_scaled
-              , future_covariates=cyc_cov
-              )
-
-
-    fc_scaled = model.predict(n=config.months_to_2099
-                              , future_covariates=cyc_cov
-                              )
-    fc = scaler.inverse_transform(fc_scaled)
-
-    # Clip negative precipitation to 0
-    if col == "precip":
-        fc = fc.map(lambda x: np.clip(x, 0, None))
-
-    return series, fc
-
-def build_future_covariates(df: pd.DataFrame, config) :
-
-    # Forecast temperature and precipitation
-    # hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
-    # hist_pr, fc_pr = forecast_precip_to_2099(df, config)
-    # plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
-
-
-    hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", config)
-    plot_covariate_forecasts(hist_tm, fc_tm, "tm_m", config, color="blue")
-        
-        
-    # Combine historical covariates
-    hist_cov = hist_tm
-    # .stack(hist_pr)
-    future_cov = fc_tm
-    # .stack(fc_pr)
-
-
-    
-    full_cov = hist_cov.concatenate(future_cov)
-
-    return full_cov, hist_cov
 
 def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_cov,full_cov):
    
@@ -550,6 +469,142 @@ def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_co
     full_cov_denoised = TimeSeries.from_dataframe(full_cov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
 
     return train_denoised, test_denoised,hist_denoised, train_cov_denoised, test_cov_denoised,hist_cov_denoised,full_cov_denoised
+
+def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, float]:
+
+    std_ref = np.std(observed, ddof=1)
+    std_sim = np.std(predicted, ddof=1)
+    corr_val = pearsonr(observed, predicted)[0]
+    rmse_val = np.sqrt(mean_squared_error(observed, predicted))
+    mae_val = mean_absolute_error(observed, predicted)
+    mape_val = np.mean(np.abs((observed - predicted) / observed)) * 100
+    
+    # Avoid division by zero in CRMSLE calculation
+    if std_ref > 0 and std_sim > 0:
+        crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2 * std_ref * std_sim * corr_val)
+    else:
+        crmse_val = np.nan
+        print("Cannot calculate CRMSE due to zero standard deviation")
+    
+    return {
+        "std_ref": std_ref,
+        "std_model": std_sim,
+        "rmse": rmse_val,
+        "corr": corr_val,
+        "crmse": crmse_val,
+        "mae": mae_val,
+        "mape": mape_val
+    }
+
+
+def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
+
+    # year as numeric attribute then scaled
+    year_ts = datetime_attribute_timeseries(time_index, attribute="year").astype(float)
+    year_ts = Scaler().fit_transform(year_ts)
+
+    # month as numeric attribute (1..12) -> convert to sin/cos
+    month_ts = datetime_attribute_timeseries(time_index, attribute="month").astype(float)
+    # convert month (1..12) -> sin/cos
+    # extract underlying dataframe and compute sin/cos
+    df_month = month_ts.pd_dataframe(copy=True)
+    df_month["month_sin"] = np.sin(2 * np.pi * df_month["month"] / 12.0)
+    df_month["month_cos"] = np.cos(2 * np.pi * df_month["month"] / 12.0)
+    df_month = df_month[["month_sin", "month_cos"]]
+
+    month_sin_cos_ts = TimeSeries.from_dataframe(df_month, time_index)
+
+    # stack year with month_sin_cos
+    covariates = year_ts.stack(month_sin_cos_ts)
+    return covariates
+
+
+def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
+    
+    df = df.copy()
+
+    series = TimeSeries.from_dataframe(df, 'ds', col)
+
+    scaler = Scaler()
+    series_scaled = scaler.fit_transform(series)
+
+    train_series, val_series = series_scaled.split_before(0.85)
+
+    full_time_idx = pd.date_range(
+        start=series.time_index[0], 
+        periods=len(series) + config.months_to_2099, 
+        freq="MS"
+    )
+
+    cyc_cov = build_cyclic_covariates(full_time_idx)
+    train_cov, val_cov = cyc_cov.split_before(len(train_series))
+
+    early_stop = EarlyStopping(
+        monitor="val_loss",
+        patience=10,
+        mode="min"
+    )
+    model = RNNModel(
+        model='LSTM',
+        input_chunk_length=config.window_size,
+        # output_chunk_length=config.horizon,
+        n_epochs=config.num_epochs,
+        optimizer_kwargs={"lr": 1e-3},
+        training_length=20,
+        force_reset=True,
+        batch_size=16,
+        dropout=config.lstm_dropout,
+        hidden_dim=config.lstm_hidden_dim,
+        n_rnn_layers=config.lstm_layers,
+        random_state=config.SEED,
+    pl_trainer_kwargs={
+        "callbacks": [early_stop]
+    }
+    )
+
+    # model.fit(series_scaled
+    #           , future_covariates=cyc_cov
+    #           )
+    model.fit(
+        train_series,
+        future_covariates=train_cov,
+        val_series=val_series,
+        val_past_covariates=val_cov
+    )
+
+
+    fc_scaled = model.predict(n=config.months_to_2099
+                              , future_covariates=cyc_cov
+                              )
+    fc = scaler.inverse_transform(fc_scaled)
+
+    # Clip negative precipitation to 0
+    if col == "precip":
+        fc = fc.map(lambda x: np.clip(x, 0, None))
+
+    return series, fc
+
+def build_future_covariates(df: pd.DataFrame, config) :
+
+    # Forecast temperature and precipitation
+    hist_pr, fc_pr = forecast_covariate_to_2099(df,"precip", config)
+    plot_covariate_forecasts(hist_pr, fc_pr, "precip", config, color="green")
+
+
+    hist_tm, fc_tm = forecast_covariate_to_2099(df, "tm_m", config)
+    plot_covariate_forecasts(hist_tm, fc_tm, "tm_m", config, color="blue")
+        
+        
+    # Combine historical covariates
+    hist_cov = hist_tm.stack(hist_pr)
+    future_cov = fc_tm.stack(fc_pr)
+
+
+    
+    full_cov = hist_cov.concatenate(future_cov)
+
+    return full_cov, hist_cov
+
 
 def create_model(model_name: str, config):
     
@@ -599,41 +654,14 @@ def create_model(model_name: str, config):
             # ,likelihood=GaussianLikelihood()
         )
     
-def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dict:
-    if weights is None:
-        weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
-
-    # Filter out None results
-    valid_models = [m for m in models if m is not None]
-    if not valid_models:
-        return None
-
-    # Extract metric arrays
-    rmse_vals = np.array([m["rmse"] for m in valid_models])
-    crmse_vals = np.array([m["crmse"] for m in valid_models])
-    corr_vals = np.array([m["corr"] for m in valid_models])
-
-    # Normalize metrics
-    rmse_norm = (rmse_vals - rmse_vals.min()) / (rmse_vals.max() - rmse_vals.min() + 1e-8)
-    crmse_norm = (crmse_vals - crmse_vals.min()) / (crmse_vals.max() - crmse_vals.min() + 1e-8)
-    corr_norm = (corr_vals - corr_vals.min()) / (corr_vals.max() - corr_vals.min() + 1e-8)
-
-    # Compute combined score (lower is better)
-    scores = (weights["rmse"] * rmse_norm + 
-              weights["crmse"] * crmse_norm - 
-              weights["corr"] * corr_norm)
-
-    best_idx = np.argmin(scores)
-    return valid_models[best_idx]
 
 
 class ForecastConfig:
-    """Configuration class for forecasting parameters"""
     def __init__(self):
         self.SEED = 42
-        self.horizon =  1
-        self.window_size = 12
-        self.num_epochs = 180
+        self.horizon =  3
+        self.window_size = 14
+        self.num_epochs = 380
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
@@ -642,17 +670,18 @@ class ForecastConfig:
         self.lstm_dropout = 0.01
         self.lstm_layers = 2
 
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        ts = datetime.datetime.now().strftime("%m%d%H%M")
         self.output_folder = (
             f"./Results/{ts}_e{self.num_epochs}"
-            f"-hdim{self.lstm_hidden_dim}-l{self.lstm_layers}"
+            f"-hd{self.lstm_hidden_dim}-l{self.lstm_layers}"
             f"-d{self.lstm_dropout}-h{self.horizon}"
         )
 
         os.makedirs(self.output_folder, exist_ok=True)
         np.random.seed(self.SEED)
 
-def main():
+
+if __name__ == "__main__":
     config = ForecastConfig()
     all_results = []
     
@@ -948,5 +977,3 @@ def main():
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
 
-if __name__ == "__main__":
-    main()
