@@ -749,7 +749,7 @@ def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries,
 
 
     # predict test horizon
-    pred_scaled = model.predict(n=len(test), past_covariates=test_cov if not use_scaler else cov_scaler.transform(test_cov))
+    pred_scaled = model.predict(n=len(test), future_covariates=test_cov if not use_scaler else cov_scaler.transform(test_cov))
 
 
     if use_scaler:
@@ -763,7 +763,7 @@ def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries,
 
     # Refit on full history (use hist_cov_s as past covariates)
 
-    model.fit(hist_s, past_covariates=hist_cov_s)
+    model.fit(hist_s, future_covariates=hist_cov_s)
 
 
 
