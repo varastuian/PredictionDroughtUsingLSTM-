@@ -82,8 +82,8 @@ def plot_rolling_error(observed, predicted, time_index, station, spi, model, con
 
 
 def plot_seasonal_cycle(hist_ts, forecast_ts, station, spi, config):
-    df_hist = hist_ts.pd_dataframe().reset_index()
-    df_fore = forecast_ts.pd_dataframe().reset_index()
+    df_hist = hist_ts.to_dataframe().reset_index()
+    df_fore = forecast_ts.to_dataframe().reset_index()
     df_hist["month"] = df_hist["ds"].dt.month
     df_fore["month"] = df_fore["ds"].dt.month
     
@@ -202,8 +202,8 @@ def plot_rolling_error(observed, predicted, time_index, station, spi, model, con
 
 
 def plot_seasonal_cycle(hist_ts, forecast_ts, station, spi, config):
-    df_hist = hist_ts.pd_dataframe().reset_index()
-    df_fore = forecast_ts.pd_dataframe().reset_index()
+    df_hist = hist_ts.to_dataframe().reset_index()
+    df_fore = forecast_ts.to_dataframe().reset_index()
     df_hist["month"] = df_hist["ds"].dt.month
     df_fore["month"] = df_fore["ds"].dt.month
     
@@ -505,12 +505,12 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
     # month as numeric attribute (1..12) -> convert to sin/cos
     month_ts = datetime_attribute_timeseries(time_index, attribute="month").astype(float)
-    df_month = month_ts.pd_dataframe(copy=True)
+    df_month = month_ts.to_dataframe(copy=True)
     df_month["month_sin"] = np.sin(2 * np.pi * df_month["month"] / 12.0)
     df_month["month_cos"] = np.cos(2 * np.pi * df_month["month"] / 12.0)
     df_month = df_month[["month_sin", "month_cos"]]
 
-    month_sin_cos_ts = TimeSeries.from_dataframe(df_month, time_index)
+    month_sin_cos_ts = TimeSeries.from_dataframe(df_month)
 
     covariates = year_ts.stack(month_sin_cos_ts)
     return covariates
@@ -583,11 +583,9 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
         val_future_covariates=cyc_cov_val,
         )
 
-    cyc_cov_for_forecast = cyc_cov.slice(series.end_time() + pd.Timedelta(days=1), cyc_cov.end_time())
+    cyc_cov_for_forecast = cyc_cov.slice(train_series.end_time()- pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1), cyc_cov.end_time())
     fc_scaled = model.predict(n=config.months_to_2099, future_covariates=cyc_cov_for_forecast)
-    # fc_scaled = model.predict(n=config.months_to_2099
-    #                           , future_covariates=cyc_cov
-    #                           )
+
     fc = scaler.inverse_transform(fc_scaled)
 
     # Clip negative precipitation to 0
@@ -630,7 +628,7 @@ def build_future_covariates(df: pd.DataFrame, config) :
     future_cov = future_cov.stack(fut_time_cov)
 
 
-    
+    future_cov = future_cov.slice(hist_cov.end_time() + pd.DateOffset(months=1), future_cov.end_time())
     full_cov = hist_cov.concatenate(future_cov)
 
     return full_cov, hist_cov
@@ -686,11 +684,118 @@ def create_model(model_name: str, config):
     
 
 
+def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries, hist_cov: TimeSeries, config, model_name: str):
+
+    # prepare series
+    df_spi = df[["ds", spi_col]].dropna().sort_values("ds").reset_index(drop=True)
+    hist = TimeSeries.from_dataframe(df_spi, time_col="ds", value_cols=spi_col)
+
+
+    # Align covariates to history
+    hist_cov_aligned = hist_cov.slice_intersect(hist)
+
+
+    # train/test/val split - time based
+    split_point = int(len(hist) * config.train_test_split)
+    train_end = hist.time_index[split_point - 1]
+    train, test = hist.split_before(train_end + pd.Timedelta(days=1))
+
+
+    # further split train-> train/val (80/20 of train)
+    sp2 = int(len(train) * 0.8)
+    train_end2 = train.time_index[sp2 - 1]
+    train_sub, val = train.split_before(train_end2 + pd.Timedelta(days=1))
+
+
+    # covariate splits
+    train_cov = hist_cov_aligned.slice(train_sub.start_time(), train_sub.end_time())
+    val_cov = hist_cov_aligned.slice(val.start_time(), val.end_time())
+    test_cov = hist_cov_aligned.slice(test.start_time(), test.end_time())
+
+    if model_name == "WTLSTM":
+        train, test,hist, train_cov, test_cov,hist_cov,full_cov = prepare_wavelet_data(spi,train, test,hist, train_cov, test_cov,hist_cov,full_cov)
+
+    # scaling
+    use_scaler = model_name in ["SVR", "LSTM","WTLSTM"]
+    if use_scaler:
+        scaler = Scaler()
+        train_s = scaler.fit_transform(train_sub)
+        val_s = scaler.transform(val)
+        hist_s = scaler.transform(hist)
+
+
+        cov_scaler = Scaler()
+        train_cov_s = cov_scaler.fit_transform(train_cov)
+        val_cov_s = cov_scaler.transform(val_cov)
+        hist_cov_s = cov_scaler.transform(hist_cov_aligned)
+        full_cov_s = cov_scaler.transform(full_cov)
+    else:
+        scaler = None
+        train_s, val_s, hist_s = train_sub, val, hist
+        train_cov_s, val_cov_s, hist_cov_s, full_cov_s = train_cov, val_cov, hist_cov_aligned, full_cov
+
+
+    model = create_model(model_name, config)
+
+
+    # Fit model with PAST covariates (these are covariates known up to the present)
+    # Darts expects "past_covariates" when variables are only known up to the present and used in autoregression.
+    model.fit(
+        train_s,
+        future_covariates=train_cov_s,
+        val_series=val_s,
+        val_future_covariates=val_cov_s,
+        )
+
+
+    # predict test horizon
+    pred_scaled = model.predict(n=len(test), past_covariates=test_cov if not use_scaler else cov_scaler.transform(test_cov))
+
+
+    if use_scaler:
+        pred = scaler.inverse_transform(pred_scaled)
+    else:
+        pred = pred_scaled
+
+
+    metrics = calculate_metrics(test.values(), pred.values())
+
+
+    # Refit on full history (use hist_cov_s as past covariates)
+
+    model.fit(hist_s, past_covariates=hist_cov_s)
+
+
+
+    # Forecast to 2099: we must pass FUTURE covariates that start right after hist.end_time()
+    forecast_start = hist.end_time() + pd.Timedelta(days=1)
+    forecast_end = full_cov.end_time()
+    future_cov_for_forecast = full_cov_s.slice(forecast_start, forecast_end)
+
+
+    months_to_2099 = (2099 - hist.end_time().year) * 12 + (12 - hist.end_time().month + 1)
+
+
+    fc_scaled = model.predict(n=months_to_2099, future_covariates=future_cov_for_forecast)
+    if use_scaler:
+        fc = scaler.inverse_transform(fc_scaled)
+    else:
+        fc = fc_scaled
+
+
+    return {
+    "metrics": metrics,
+    "hist":hist,
+    "test_pred": pred,
+    "test_obs": test,
+    "forecast_to_2099": fc,
+    }
+
 class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        self.window_size = 24
+        self.window_size = 15
         self.num_epochs = 170
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
@@ -725,7 +830,8 @@ if __name__ == "__main__":
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
-        df["ds"] = pd.to_datetime(df["ds"])
+        # df["ds"] = pd.to_datetime(df["ds"])
+        df = df.sort_values("ds").reset_index(drop=True)
         df = df.set_index("ds").asfreq("MS").reset_index()
         # plot_raw_data(df, station, config)
 
@@ -736,8 +842,8 @@ if __name__ == "__main__":
         full_cov, hist_cov = build_future_covariates(df, config)
 
 
-        raw_hist_cov = hist_cov.copy()
-        raw_full_cov = full_cov.copy()
+        # raw_hist_cov = hist_cov.copy()
+        # raw_full_cov = full_cov.copy()
 
 
         best_results = []
@@ -745,116 +851,36 @@ if __name__ == "__main__":
             if spi not in ["SPI_6"]:
                 continue
             model_metrics = []
-
-            df_spi = df[["ds", spi]].dropna().reset_index(drop=True)
-            hist = TimeSeries.from_dataframe(df_spi, 'ds', spi)
-            raw_hist = hist.copy()
-
             for model_name in config.models_to_test:
                 if model_name != "LSTM":
                     continue
                 print(f"Running: {station} {spi} {model_name}")
-                            
-                # Split data
-                hist = raw_hist
-                hist_cov = raw_hist_cov.slice_intersect(hist)
-                full_cov = raw_full_cov
-                # .slice(hist.start_time(), full_cov.end_time())
-                train, test = hist.split_before(config.train_test_split)
-                train, val = train.split_before(0.8)
+                results = train_and_forecast_spi(df, spi, full_cov, hist_cov, config, model_name)     
+                print("Test metrics:", results["metrics"])
+                test = results["test_obs"]
+                pred = results["test_pred"]
+                fc = results["forecast_to_2099"]
+                metrics = results["metrics"]
+                hist = results["hist"]
 
 
-                train_cov, test_cov = hist_cov.split_before(config.train_test_split)
-                train_cov, val_cov = train_cov.split_before(0.8)
-
-                test_raw = test.copy()
-                if model_name == "WTLSTM":
-                    train, test,hist, train_cov, test_cov,hist_cov,full_cov = prepare_wavelet_data(spi,train, test,hist, train_cov, test_cov,hist_cov,full_cov)
-
-                # Scale data if needed
-                use_scaler = model_name in ["SVR", "LSTM", "WTLSTM"]
-                scaler = None
-                
-                if use_scaler:
-                    scaler = Scaler()
-                    train_scaled = scaler.fit_transform(train)
-                    val_scaled = scaler.transform(val)
-                    hist_scaled = scaler.transform(hist)
-                                        
-                    cov_scaler = Scaler()
-                    train_cov_scaled = cov_scaler.fit_transform(train_cov)
-                    val_cov_scaled = cov_scaler.transform(val_cov)
-                    hist_cov_scaled = cov_scaler.transform(hist_cov)
-                    full_cov_scaled = cov_scaler.transform(full_cov)
-                else:
-                    train_scaled = train
-                    # test_scaled = test
-                    hist_scaled = hist
-
-                    train_cov_scaled = train_cov
-                    # test_cov_scaled = test_cov
-                    hist_cov_scaled = hist_cov
-                    full_cov_scaled =full_cov
-
-
-                # Create and train model
-                model = create_model(model_name, config)
-                
-                
-                # model.fit(train_scaled
-                #           , future_covariates=train_cov_scaled
-                #           )
-                
-                model.fit(
-                    train_scaled,
-                    future_covariates=train_cov_scaled,
-                    val_series=val_scaled,
-                    val_future_covariates=val_cov_scaled,
-                )
-
-
-                pred = model.predict(n=len(test)
-                        , future_covariates=hist_cov_scaled
-                        )
-             
-                # Inverse transform if scaled
-                if use_scaler:
-                    pred = scaler.inverse_transform(pred)
-                    test = scaler.inverse_transform(test)
-
-                # Calculate metrics
-                observed = test_raw.values().flatten()
-                predicted = pred.values().flatten()
-                metrics = calculate_metrics(observed, predicted)
-
+                out_df = fc.to_dataframe()
+                out_path = os.path.join(config.output_folder, f"{station}_{spi}_{model_name}_forecast_to_2099.csv")
+                out_df.to_csv(out_path, index=True)
+                print("Saved forecast to", out_path)
 
                 # plot_scatter(observed, predicted, station, spi, model_name, config)
                 # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
                 # plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
                 
-                #==========================================
-                # Refit model on full historical data
-                #==========================================
-                # model.fit(hist_scaled
-                # , future_covariates=hist_cov_scaled
-                # )
-
                 
-                # Make forecast
-                forecast = model.predict(n=config.months_to_2099
-                        ,future_covariates=full_cov_scaled
-                )
-                
-                if scaler is not None:
-                    forecast = scaler.inverse_transform(forecast)
-                    hist_scaled = scaler.inverse_transform(hist_scaled)
 
                 metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
 
 
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
-                ax.plot(pred.time_index,predicted,label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
+                ax.plot(pred.time_index,pred,label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
                 ax.set_title(f"{station} {spi} - Test Prediction Quality")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
@@ -872,9 +898,9 @@ if __name__ == "__main__":
                 # Plot results
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
-                ax.plot(pred.time_index, predicted, label="Predicted", lw=0.4,
+                ax.plot(pred.time_index, pred, label="Predicted", lw=0.4,
                         color="red", linestyle="--")
-                ax.plot(forecast.time_index, forecast.values(), label="Forecast",
+                ax.plot(fc.time_index, fc.values(), label="Forecast",
                         lw=0.6, color="green")
                 ax.set_title(f"{station} {spi} {model_name} Forecast till 2099")
                 ax.set_xlabel("Date")
@@ -893,7 +919,7 @@ if __name__ == "__main__":
                 )
 
                 # ----------------------- Global trend line -----------------------
-                forecast_df = forecast.to_dataframe()
+                forecast_df = fc.to_dataframe()
                 x = np.arange(len(forecast_df))
                 y = forecast_df.iloc[:, 0].values
                 dates = forecast_df.index
@@ -968,7 +994,7 @@ if __name__ == "__main__":
                     "horizon": config.horizon,
                     "window_size": config.window_size,
                     "epoch": config.num_epochs,
-                    "forecast": forecast,
+                    "forecast": fc,
                     "pred": pred,
                     "series": hist
                 }
@@ -1004,6 +1030,12 @@ if __name__ == "__main__":
     #     # plot_metric_boxplots(metrics_df, config)
     #     # plot_model_ranking(metrics_df, config)
 
+
+
+                
+
+
+               
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
 
