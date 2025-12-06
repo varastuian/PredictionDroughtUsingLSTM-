@@ -684,18 +684,8 @@ def create_model(model_name: str, config):
     
 
 
-def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries, hist_cov: TimeSeries, config, model_name: str):
+def train_and_forecast_spi(hist, full_cov, hist_cov_aligned, config, model_name):
 
-    # prepare series
-    df_spi = df[["ds", spi_col]].dropna().sort_values("ds").reset_index(drop=True)
-    hist = TimeSeries.from_dataframe(df_spi, time_col="ds", value_cols=spi_col)
-
-
-    # Align covariates to history
-    hist_cov_aligned = hist_cov.slice_intersect(hist)
-
-
-    # train/test/val split - time based
     split_point = int(len(hist) * config.train_test_split)
     train_end = hist.time_index[split_point - 1]
     train, test = hist.split_before(train_end + pd.Timedelta(days=1))
@@ -710,7 +700,7 @@ def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries,
     # covariate splits
     train_cov = hist_cov_aligned.slice(train_sub.start_time(), train_sub.end_time())
     val_cov = hist_cov_aligned.slice(val.start_time(), val.end_time())
-    test_cov = hist_cov_aligned.slice(test.start_time(), test.end_time())
+    test_cov = hist_cov_aligned.slice(train_sub.end_time() - pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1), test.end_time())
 
     if model_name == "WTLSTM":
         train, test,hist, train_cov, test_cov,hist_cov,full_cov = prepare_wavelet_data(spi,train, test,hist, train_cov, test_cov,hist_cov,full_cov)
@@ -763,12 +753,13 @@ def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries,
 
     # Refit on full history (use hist_cov_s as past covariates)
 
-    model.fit(hist_s, future_covariates=hist_cov_s)
+    # model.fit(hist_s, future_covariates=hist_cov_s)
 
 
 
     # Forecast to 2099: we must pass FUTURE covariates that start right after hist.end_time()
-    forecast_start = hist.end_time() + pd.Timedelta(days=1)
+    # forecast_start = hist.end_time() + pd.Timedelta(days=1)
+    forecast_start = train_sub.end_time() - pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1)
     forecast_end = full_cov.end_time()
     future_cov_for_forecast = full_cov_s.slice(forecast_start, forecast_end)
 
@@ -785,7 +776,7 @@ def train_and_forecast_spi(df: pd.DataFrame, spi_col: str, full_cov: TimeSeries,
 
     return {
     "metrics": metrics,
-    "hist":hist,
+    # "hist":hist,
     "test_pred": pred,
     "test_obs": test,
     "forecast_to_2099": fc,
@@ -796,7 +787,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 15
-        self.num_epochs = 170
+        self.num_epochs = 1
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
@@ -855,13 +846,19 @@ if __name__ == "__main__":
                 if model_name != "LSTM":
                     continue
                 print(f"Running: {station} {spi} {model_name}")
-                results = train_and_forecast_spi(df, spi, full_cov, hist_cov, config, model_name)     
+
+                df_spi = df[["ds", spi]].dropna().sort_values("ds").reset_index(drop=True)
+                hist = TimeSeries.from_dataframe(df_spi, time_col="ds", value_cols=spi)
+                # Align covariates to history
+                hist_cov_aligned = hist_cov.slice_intersect(hist)
+
+                results = train_and_forecast_spi(hist, full_cov, hist_cov_aligned, config, model_name)     
                 print("Test metrics:", results["metrics"])
                 test = results["test_obs"]
                 pred = results["test_pred"]
                 fc = results["forecast_to_2099"]
                 metrics = results["metrics"]
-                hist = results["hist"]
+                # hist = results["hist"]
 
 
                 out_df = fc.to_dataframe()
@@ -875,9 +872,11 @@ if __name__ == "__main__":
                 
                 
 
-                metrics_text = f"RMSE: {metrics['rmse']:.3f}\nCorr: {metrics['corr']:.3f}"
+                corr_val = metrics['corr'][0]
+                rmse_val = metrics['rmse']
 
-
+                metrics_text = f"RMSE: {rmse_val:.3f}\nCorr: {corr_val:.3f}"
+                
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
                 ax.plot(pred.time_index,pred,label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
