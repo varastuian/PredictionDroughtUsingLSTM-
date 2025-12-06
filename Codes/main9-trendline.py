@@ -544,11 +544,7 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     cyc_cov_train = cyc_cov.slice(series_scaled.start_time(), train_series.end_time())
     cyc_cov_val = cyc_cov.slice(val_series.start_time(), val_series.end_time())
 
-    early_stop = EarlyStopping(
-        monitor="val_loss",
-        patience=10,
-        mode="min"
-    )
+    
     model = RNNModel(
         model='LSTM',
         input_chunk_length=config.window_size,
@@ -563,19 +559,18 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
         n_rnn_layers=config.lstm_layers,
         random_state=config.SEED,
     pl_trainer_kwargs={
-        "callbacks": [early_stop]
+        "callbacks": [EarlyStopping(
+        monitor="val_loss",
+        patience=10,
+        mode="min"
+    )]
     }
     )
 
     # model.fit(series_scaled
     #           , future_covariates=cyc_cov
     #           )
-    # model.fit(
-    #     train_series,
-    #     future_covariates=train_cov,
-    #     val_series=val_series,
-    #     val_past_covariates=val_cov
-    # )
+
     model.fit(
         series=train_series,
         future_covariates=cyc_cov_train,
@@ -611,9 +606,7 @@ def build_future_covariates(df: pd.DataFrame, config) :
 
     # build cyclic covariates for entire span (needed to combine with climate covariates)
     start = hist_cov.start_time()
-    last_date = hist_pr.time_index[-1]
-    months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month + 1)
-    total_periods = len(hist_pr) + months_to_2099
+    total_periods = len(hist_pr) + config.months_to_2099
     full_time_idx = pd.date_range(start=start, periods=total_periods, freq="MS")
     time_cov = build_cyclic_covariates(full_time_idx)
 
@@ -787,7 +780,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 15
-        self.num_epochs = 1
+        self.num_epochs = 300
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
@@ -821,7 +814,6 @@ if __name__ == "__main__":
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
-        # df["ds"] = pd.to_datetime(df["ds"])
         df = df.sort_values("ds").reset_index(drop=True)
         df = df.set_index("ds").asfreq("MS").reset_index()
         # plot_raw_data(df, station, config)
@@ -832,7 +824,7 @@ if __name__ == "__main__":
 
         full_cov, hist_cov = build_future_covariates(df, config)
 
-
+        exit()
         # raw_hist_cov = hist_cov.copy()
         # raw_full_cov = full_cov.copy()
 
@@ -879,7 +871,7 @@ if __name__ == "__main__":
                 
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
-                ax.plot(pred.time_index,pred,label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
+                ax.plot(pred.time_index,pred.values(),label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
                 ax.set_title(f"{station} {spi} - Test Prediction Quality")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
@@ -897,7 +889,7 @@ if __name__ == "__main__":
                 # Plot results
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
-                ax.plot(pred.time_index, pred, label="Predicted", lw=0.4,
+                ax.plot(pred.time_index, pred.values(), label="Predicted", lw=0.4,
                         color="red", linestyle="--")
                 ax.plot(fc.time_index, fc.values(), label="Forecast",
                         lw=0.6, color="green")
