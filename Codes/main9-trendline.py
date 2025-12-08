@@ -399,14 +399,19 @@ def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dic
         return None
 
     # Extract metric arrays
-    rmse_vals = np.array([m["rmse"] for m in valid_models])
-    crmse_vals = np.array([m["crmse"] for m in valid_models])
-    corr_vals = np.array([m["corr"] for m in valid_models])
+    # rmse_vals = np.array([m["rmse"] for m in valid_models])
+    # crmse_vals = np.array([m["crmse"] for m in valid_models])
+    # corr_vals = np.array([m["corr"] for m in valid_models])
+    rmse_vals = np.array([float(m["rmse"]) for m in valid_models])
+    crmse_vals = np.array([float(m["crmse"]) for m in valid_models])
+    corr_vals = np.array([float(m["corr"]) for m in valid_models])
 
     # Normalize metrics
     rmse_norm = (rmse_vals - rmse_vals.min()) / (rmse_vals.max() - rmse_vals.min() + 1e-8)
     crmse_norm = (crmse_vals - crmse_vals.min()) / (crmse_vals.max() - crmse_vals.min() + 1e-8)
     corr_norm = (corr_vals - corr_vals.min()) / (corr_vals.max() - corr_vals.min() + 1e-8)
+
+
 
     # Compute combined score (lower is better)
     scores = (weights["rmse"] * rmse_norm + 
@@ -416,59 +421,59 @@ def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dic
     best_idx = np.argmin(scores)
     return valid_models[best_idx]
 
+def apply_reverse_wavelet(pred_ts, wavelet_info):
+    wavelet = wavelet_info["wavelet"]
+    coeffs_orig = wavelet_info["train_coeffs"]
 
+    # replace only the "approximation" part with prediction
+    coeffs_new = coeffs_orig.copy()
+    coeffs_new[0] = pred_ts.values().flatten()
 
-def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
+    recon = pywt.waverec(coeffs_new, wavelet)
+    recon = recon[:len(pred_ts)]
+
+    return TimeSeries.from_times_and_values(pred_ts.time_index, recon)
+
+# def wavelet_denoise(series: np.ndarray, wavelet: str = "db4", level: int = 1) -> np.ndarray:
     
+#     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
+#     # Universal threshold based on noise estimate
+#     threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(series)))
+#     coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c for i, c in enumerate(coeffs)]
+#     denoised = pywt.waverec(coeffs_denoised, wavelet=wavelet)
+#     return denoised[:len(series)]
+
+def wavelet_denoise(series, wavelet="db4", level=1):
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
-    # Universal threshold based on noise estimate
     threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(series)))
-    coeffs_denoised = [pywt.threshold(c, threshold, mode="soft") if i > 0 else c for i, c in enumerate(coeffs)]
+    coeffs_denoised = [coeffs[0]] + [pywt.threshold(c, threshold, "soft") for c in coeffs[1:]]
     denoised = pywt.waverec(coeffs_denoised, wavelet=wavelet)
-    return denoised[:len(series)]
+    return denoised[:len(series)], coeffs  # return coeffs for reconstruction
 
-def prepare_wavelet_data(value_col,train, test,hist, train_cov, test_cov,hist_cov,full_cov):
-   
-    # Convert to DataFrames
+def prepare_wavelet_data(train, full_cov, return_info=False):
+
+    value_col = train.components[0]
     train_df = train.to_dataframe().reset_index()
-    test_df = test.to_dataframe().reset_index()
-    hist_df = hist.to_dataframe().reset_index()
+    fcov_df = full_cov.to_dataframe().reset_index()
 
-    traincov_df = train_cov.to_dataframe().reset_index()
-    testcov_df = test_cov.to_dataframe().reset_index()
-    hist_cov_df = hist_cov.to_dataframe().reset_index()
-    full_cov_df = full_cov.to_dataframe().reset_index()
+    # --- apply denoising and store original coeffs for reconstruction ---
+    train_df[f"{value_col}_denoised"], train_coeffs = wavelet_denoise(train_df[value_col].values)
+    fcov_df["tm_m_denoised"], tm_coeffs = wavelet_denoise(fcov_df["tm_m"].values)
+    fcov_df["precip_denoised"], pr_coeffs = wavelet_denoise(fcov_df["precip"].values)
 
-    # Apply wavelet denoising
-    train_df[f"{value_col}_denoised"] = wavelet_denoise(train_df[value_col].values)
-    test_df[f"{value_col}_denoised"] = wavelet_denoise(test_df[value_col].values)
-    hist_df[f"{value_col}_denoised"] = wavelet_denoise(hist_df[value_col].values)
+    cyclic = [c for c in fcov_df.columns if "month" in c or "year" in c]
 
-    traincov_df["tm_m_denoised"] = wavelet_denoise(traincov_df["tm_m"].values)
-    testcov_df["tm_m_denoised"] = wavelet_denoise(testcov_df["tm_m"].values)
-    hist_cov_df["tm_m_denoised"] = wavelet_denoise(hist_cov_df["tm_m"].values)
-    full_cov_df["tm_m_denoised"] = wavelet_denoise(full_cov_df["tm_m"].values)
+    train_d = TimeSeries.from_dataframe(train_df, "ds", f"{value_col}_denoised")
+    full_cov_d = TimeSeries.from_dataframe(fcov_df, "ds",
+                                           ["tm_m_denoised", "precip_denoised"] + cyclic)
 
-    traincov_df["precip_denoised"] = wavelet_denoise(traincov_df["precip"].values)
-    testcov_df["precip_denoised"] = wavelet_denoise(testcov_df["precip"].values)
-    hist_cov_df["precip_denoised"] = wavelet_denoise(hist_cov_df["precip"].values)
-    full_cov_df["precip_denoised"] = wavelet_denoise(full_cov_df["precip"].values)
+    if return_info:
+        return train_d, full_cov_d, {
+            "train_coeffs": train_coeffs,
+            "wavelet": "db4"
+        }
 
-    # Get cyclic columns
-    cyclic_cols = [col for col in full_cov_df.columns if "month" in col or "year" in col]
-
-    # Rebuild TimeSeries objects
-    train_denoised = TimeSeries.from_dataframe(train_df, "ds", f"{value_col}_denoised")
-    test_denoised = TimeSeries.from_dataframe(test_df, "ds", f"{value_col}_denoised")
-    hist_denoised = TimeSeries.from_dataframe(hist_df, "ds", f"{value_col}_denoised")
-
-
-    train_cov_denoised = TimeSeries.from_dataframe(traincov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
-    test_cov_denoised = TimeSeries.from_dataframe(testcov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
-    hist_cov_denoised = TimeSeries.from_dataframe(hist_cov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
-    full_cov_denoised = TimeSeries.from_dataframe(full_cov_df, "ds", ["tm_m_denoised", "precip_denoised"] + cyclic_cols)
-
-    return train_denoised, test_denoised,hist_denoised, train_cov_denoised, test_cov_denoised,hist_cov_denoised,full_cov_denoised
+    return train_d, full_cov_d
 
 def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, float]:
 
@@ -512,7 +517,8 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
     month_sin_cos_ts = TimeSeries.from_dataframe(df_month)
 
-    covariates = year_ts.stack(month_sin_cos_ts)
+    # covariates = year_ts.stack(month_sin_cos_ts)
+    covariates = month_sin_cos_ts
     return covariates
 
 # -------------------------------
@@ -558,28 +564,28 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
         hidden_dim=config.lstm_hidden_dim,
         n_rnn_layers=config.lstm_layers,
         random_state=config.SEED,
-    pl_trainer_kwargs={
-        "callbacks": [EarlyStopping(
-        monitor="val_loss",
-        patience=10,
-        mode="min"
-    )]
-    }
+    # pl_trainer_kwargs={
+    #     "callbacks": [EarlyStopping(
+    #     monitor="val_loss",
+    #     patience=10,
+    #     mode="min"
+    # )]
+    # }
     )
 
-    # model.fit(series_scaled
-    #           , future_covariates=cyc_cov
-    #           )
+    model.fit(series_scaled
+              , future_covariates=cyc_cov
+              )
 
-    model.fit(
-        series=train_series,
-        future_covariates=cyc_cov_train,
-        val_series=val_series,
-        val_future_covariates=cyc_cov_val,
-        )
+    # model.fit(
+    #     series=train_series,
+    #     future_covariates=cyc_cov_train,
+    #     val_series=val_series,
+    #     val_future_covariates=cyc_cov_val,
+    #     )
 
-    cyc_cov_for_forecast = cyc_cov.slice(train_series.end_time()- pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1), cyc_cov.end_time())
-    fc_scaled = model.predict(n=config.months_to_2099, future_covariates=cyc_cov_for_forecast)
+    # cyc_cov_for_forecast = cyc_cov.slice(series_scaled.end_time()- pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1), cyc_cov.end_time())
+    fc_scaled = model.predict(n=config.months_to_2099, future_covariates=cyc_cov)
 
     fc = scaler.inverse_transform(fc_scaled)
 
@@ -650,96 +656,65 @@ def create_model(model_name: str, config):
             ,lags_past_covariates=[-i for i in range(1,13)]
         )
     elif model_name in ["LSTM","WTLSTM"] :
-        return RNNModel(
+        return BlockRNNModel(
             model="LSTM", 
             input_chunk_length=config.window_size, 
-            # output_chunk_length=config.horizon,
+            output_chunk_length=config.horizon,
             n_epochs=config.num_epochs, 
             optimizer_kwargs={"lr": 1e-3},
-            training_length=48,
+            # training_length=48,
             force_reset=True,
             batch_size=16,
             dropout=config.lstm_dropout,
             n_rnn_layers=config.lstm_layers,
             hidden_dim=config.lstm_hidden_dim, 
             random_state=config.SEED,
-            pl_trainer_kwargs={
-                "callbacks": [
-                    EarlyStopping(
-                        monitor="val_loss",
-                        patience=15,
-                        mode="min"
-                    )
-                ]
-            }
             # ,likelihood=GaussianLikelihood()
         )
     
 
 
-def train_and_forecast_spi(hist, full_cov, hist_cov_aligned, config, model_name):
+def train_and_forecast_spi(hist, full_cov, config, model_name):
 
     split_point = int(len(hist) * config.train_test_split)
     train_end = hist.time_index[split_point - 1]
     train, test = hist.split_before(train_end + pd.Timedelta(days=1))
 
-
-    # further split train-> train/val (80/20 of train)
-    sp2 = int(len(train) * 0.8)
-    train_end2 = train.time_index[sp2 - 1]
-    train_sub, val = train.split_before(train_end2 + pd.Timedelta(days=1))
-
-
-    # covariate splits
-    train_cov = hist_cov_aligned.slice(train_sub.start_time(), train_sub.end_time())
-    val_cov = hist_cov_aligned.slice(val.start_time(), val.end_time())
-    test_cov = hist_cov_aligned.slice(train_sub.end_time() - pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1), test.end_time())
-
     if model_name == "WTLSTM":
-        train, test,hist, train_cov, test_cov,hist_cov,full_cov = prepare_wavelet_data(spi,train, test,hist, train_cov, test_cov,hist_cov,full_cov)
+        train, full_cov, wavelet_info = prepare_wavelet_data(train, full_cov, return_info=True)
+    else:
+        wavelet_info = None
+
 
     # scaling
     use_scaler = model_name in ["SVR", "LSTM","WTLSTM"]
     if use_scaler:
         scaler = Scaler()
-        train_s = scaler.fit_transform(train_sub)
-        val_s = scaler.transform(val)
-        hist_s = scaler.transform(hist)
-
-
+        train_s = scaler.fit_transform(train)
+    
         cov_scaler = Scaler()
-        train_cov_s = cov_scaler.fit_transform(train_cov)
-        val_cov_s = cov_scaler.transform(val_cov)
-        hist_cov_s = cov_scaler.transform(hist_cov_aligned)
-        full_cov_s = cov_scaler.transform(full_cov)
+        full_cov_s = cov_scaler.fit_transform(full_cov)
     else:
         scaler = None
-        train_s, val_s, hist_s = train_sub, val, hist
-        train_cov_s, val_cov_s, hist_cov_s, full_cov_s = train_cov, val_cov, hist_cov_aligned, full_cov
+        train_s = train, 
+        full_cov_s = full_cov
 
 
     model = create_model(model_name, config)
 
 
-    # Fit model with PAST covariates (these are covariates known up to the present)
-    # Darts expects "past_covariates" when variables are only known up to the present and used in autoregression.
-    model.fit(
-        train_s,
-        future_covariates=train_cov_s,
-        val_series=val_s,
-        val_future_covariates=val_cov_s,
-        )
+    model.fit(train_s
+            , past_covariates=full_cov_s
+    )
+    
 
 
     # predict test horizon
-    pred_scaled = model.predict(n=len(test), future_covariates=test_cov if not use_scaler else cov_scaler.transform(test_cov))
+    pred_scaled = model.predict(n=len(test), past_covariates=full_cov_s)
 
-
-    if use_scaler:
-        pred = scaler.inverse_transform(pred_scaled)
-    else:
-        pred = pred_scaled
-
+    pred = scaler.inverse_transform(pred_scaled) if use_scaler else pred_scaled
+    # if model_name == "WTLSTM":
+    #         pred = apply_reverse_wavelet(pred, wavelet_info)
 
     metrics = calculate_metrics(test.values(), pred.values())
 
@@ -752,15 +727,15 @@ def train_and_forecast_spi(hist, full_cov, hist_cov_aligned, config, model_name)
 
     # Forecast to 2099: we must pass FUTURE covariates that start right after hist.end_time()
     # forecast_start = hist.end_time() + pd.Timedelta(days=1)
-    forecast_start = train_sub.end_time() - pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1)
-    forecast_end = full_cov.end_time()
-    future_cov_for_forecast = full_cov_s.slice(forecast_start, forecast_end)
+    # forecast_start = train_sub.end_time() - pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1)
+    # forecast_end = full_cov.end_time()
+    # future_cov_for_forecast = full_cov_s.slice(forecast_start, forecast_end)
 
 
-    months_to_2099 = (2099 - hist.end_time().year) * 12 + (12 - hist.end_time().month + 1)
+    # months_to_2099 = (2099 - hist.end_time().year) * 12 + (12 - hist.end_time().month + 1)
 
 
-    fc_scaled = model.predict(n=months_to_2099, future_covariates=future_cov_for_forecast)
+    fc_scaled = model.predict(n=config.months_to_2099, past_covariates=full_cov_s)
     if use_scaler:
         fc = scaler.inverse_transform(fc_scaled)
     else:
@@ -780,7 +755,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 15
-        self.num_epochs = 300
+        self.num_epochs = 170
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
@@ -809,8 +784,8 @@ if __name__ == "__main__":
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        if station != "40700":
-            continue
+        # if station != "40700":
+        #     continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
@@ -824,27 +799,22 @@ if __name__ == "__main__":
 
         full_cov, hist_cov = build_future_covariates(df, config)
 
-        exit()
-        # raw_hist_cov = hist_cov.copy()
-        # raw_full_cov = full_cov.copy()
-
-
         best_results = []
         for spi in config.SPI:
-            if spi not in ["SPI_6"]:
-                continue
+            # if spi not in ["SPI_6"]:
+            #     continue
             model_metrics = []
             for model_name in config.models_to_test:
-                if model_name != "LSTM":
-                    continue
+                # if model_name != "LSTM":
+                #     continue
                 print(f"Running: {station} {spi} {model_name}")
 
                 df_spi = df[["ds", spi]].dropna().sort_values("ds").reset_index(drop=True)
                 hist = TimeSeries.from_dataframe(df_spi, time_col="ds", value_cols=spi)
                 # Align covariates to history
-                hist_cov_aligned = hist_cov.slice_intersect(hist)
+                # hist_cov_aligned = hist_cov.slice_intersect(hist)
 
-                results = train_and_forecast_spi(hist, full_cov, hist_cov_aligned, config, model_name)     
+                results = train_and_forecast_spi(hist, full_cov, config, model_name)     
                 print("Test metrics:", results["metrics"])
                 test = results["test_obs"]
                 pred = results["test_pred"]
