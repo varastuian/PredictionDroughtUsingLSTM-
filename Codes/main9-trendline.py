@@ -823,10 +823,10 @@ if __name__ == "__main__":
                 # hist = results["hist"]
 
 
-                out_df = fc.to_dataframe()
-                out_path = os.path.join(config.output_folder, f"{station}_{spi}_{model_name}_forecast_to_2099.csv")
-                out_df.to_csv(out_path, index=True)
-                print("Saved forecast to", out_path)
+                # out_df = fc.to_dataframe()
+                # out_path = os.path.join(config.output_folder, f"{station}_{spi}_{model_name}_forecast_to_2099.csv")
+                # out_df.to_csv(out_path, index=True)
+                # print("Saved forecast to", out_path)
 
                 # plot_scatter(observed, predicted, station, spi, model_name, config)
                 # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
@@ -842,7 +842,7 @@ if __name__ == "__main__":
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
                 ax.plot(pred.time_index,pred.values(),label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
-                ax.set_title(f"{station} {spi} - Test Prediction Quality")
+                ax.set_title(f"{station} {spi} {model_name} ")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
                 ax.text(0.02, 0.95, metrics_text,transform=ax.transAxes,fontsize=10,verticalalignment="top",
@@ -852,7 +852,7 @@ if __name__ == "__main__":
                 ax.grid(True, alpha=0.3)
                 ax.legend()
                 plt.tight_layout()
-                outfile = os.path.join(config.output_folder,f"historical-{station} {spi}_{model_name}.png")
+                outfile = os.path.join(config.output_folder,f"{station}_{spi}_{model_name}_historical.png")
                 fig.savefig(outfile, dpi=300, bbox_inches="tight")
                 plt.close()                    
 
@@ -863,7 +863,7 @@ if __name__ == "__main__":
                         color="red", linestyle="--")
                 ax.plot(fc.time_index, fc.values(), label="Forecast",
                         lw=0.6, color="green")
-                ax.set_title(f"{station} {spi} {model_name} Forecast till 2099")
+                ax.set_title(f"{station} {spi} {model_name}")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
                 ax.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
@@ -944,7 +944,7 @@ if __name__ == "__main__":
 
                 # ----------------------- Save -----------------------
                 outfile = os.path.join(config.output_folder,
-                                    f"{station} {spi}_{model_name}.png")
+                                    f"{station}_{spi}_{model_name}.png")
                 fig.savefig(outfile, dpi=300, bbox_inches="tight")
                 plt.close()
 
@@ -975,21 +975,21 @@ if __name__ == "__main__":
 
 
         # Save plots for this station
-        # if best_results:
-        #     plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
-        #     plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
+        if best_results:
+            plot_final_forecasts(station, best_results, os.path.join(config.output_folder, f"forecast_{station}.png"))
+            plot_heatmaps(station, best_results, os.path.join(config.output_folder, f"heatmap_{station}.png"))
             
        
     
-    # # Save metrics and create Taylor diagrams
-    # if all_results:
-    #     metrics_df = pd.DataFrame(all_results)
-    #     metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
+    # Save metrics and create Taylor diagrams
+    if all_results:
+        metrics_df = pd.DataFrame(all_results)
+        metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
         
-    #     for station in metrics_df["station"].unique():
-    #         taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
-    #     # plot_metric_boxplots(metrics_df, config)
-    #     # plot_model_ranking(metrics_df, config)
+        for station in metrics_df["station"].unique():
+            taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
+        plot_metric_boxplots(metrics_df, config)
+        plot_model_ranking(metrics_df, config)
 
 
 
