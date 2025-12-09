@@ -10,7 +10,7 @@ from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from scipy.stats import pearsonr
 from darts import TimeSeries
-from darts.models import BlockRNNModel, RegressionModel,RandomForest,XGBModel,RNNModel
+from darts.models import BlockRNNModel, RegressionModel,RandomForest,XGBModel,RNNModel,NHiTSModel, TFTModel
 # from darts.metrics import mae, mape, rmse
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
@@ -134,10 +134,10 @@ def plot_model_ranking(metrics_df, config):
 def plot_covariate_forecasts(hist_ts, future_ts, covariate: str, config, color: str = "blue"):
 
     plt.figure(figsize=(14, 6))
-    plt.plot(hist_ts.time_index, hist_ts.values().flatten(), label=f"Historical {covariate}", color=color, lw=0.5)
-    plt.plot(future_ts.time_index, future_ts.values().flatten(), label=f"Forecast {covariate}", color=color, lw=0.5)
+    plt.plot(hist_ts.time_index, hist_ts.values().flatten(), label=f"Historical {covariate}", lw=0.5)
+    plt.plot(future_ts.time_index, future_ts.values().flatten(), label=f"Forecast {covariate}", color="green", lw=0.5)
     plt.axvline(x=hist_ts.end_time(), color="red", linestyle=":", lw=1.5, label="Forecast Start")
-    plt.title(f"{config.station} - {covariate} - Historical vs Forecasted to 2099")
+    plt.title(f"{config.station} - {covariate} ")
     plt.xlabel("Date")
     plt.ylabel(covariate)
     plt.legend()
@@ -402,9 +402,11 @@ def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dic
     # rmse_vals = np.array([m["rmse"] for m in valid_models])
     # crmse_vals = np.array([m["crmse"] for m in valid_models])
     # corr_vals = np.array([m["corr"] for m in valid_models])
+    print(m for m in valid_models)
     rmse_vals = np.array([float(m["rmse"]) for m in valid_models])
     crmse_vals = np.array([float(m["crmse"]) for m in valid_models])
     corr_vals = np.array([float(m["corr"]) for m in valid_models])
+
 
     # Normalize metrics
     rmse_norm = (rmse_vals - rmse_vals.min()) / (rmse_vals.max() - rmse_vals.min() + 1e-8)
@@ -630,7 +632,7 @@ def build_future_covariates(df: pd.DataFrame, config) :
     future_cov = future_cov.slice(hist_cov.end_time() + pd.DateOffset(months=1), future_cov.end_time())
     full_cov = hist_cov.concatenate(future_cov)
 
-    return full_cov, hist_cov
+    return full_cov
 
 
 def create_model(model_name: str, config):
@@ -671,6 +673,25 @@ def create_model(model_name: str, config):
             random_state=config.SEED,
             # ,likelihood=GaussianLikelihood()
         )
+    elif model_name == "NHiTS":
+        return NHiTSModel(
+            input_chunk_length=config.window_size,
+            output_chunk_length=config.horizon,
+            n_epochs=config.num_epochs,
+            random_state=config.SEED,
+        )
+
+    elif model_name == "TFT":
+        return TFTModel(
+            input_chunk_length=config.window_size,
+            output_chunk_length=config.horizon,
+            hidden_size=config.lstm_hidden_dim,
+            lstm_layers=config.lstm_layers,
+            dropout=config.lstm_dropout,
+            # attention_dropout=config.lstm_dropout,
+            n_epochs=config.num_epochs,
+            random_state=config.SEED,
+        )
     
 
 
@@ -702,49 +723,39 @@ def train_and_forecast_spi(hist, full_cov, config, model_name):
 
     model = create_model(model_name, config)
 
+    if model_name == "TFT":
+         model.fit(train_s, future_covariates=full_cov_s)
+    else:
+        model.fit(train_s, past_covariates=full_cov_s)
 
-    model.fit(train_s
-            , past_covariates=full_cov_s
-    )
     
+    if model_name == "TFT":
+        pred_scaled = model.predict(n=len(test), future_covariates=full_cov_s)
 
+    else:
+        pred_scaled = model.predict(n=len(test), past_covariates=full_cov_s)
 
-    # predict test horizon
-    pred_scaled = model.predict(n=len(test), past_covariates=full_cov_s)
 
     pred = scaler.inverse_transform(pred_scaled) if use_scaler else pred_scaled
-    # if model_name == "WTLSTM":
-    #         pred = apply_reverse_wavelet(pred, wavelet_info)
+
 
     metrics = calculate_metrics(test.values(), pred.values())
 
 
-    # Refit on full history (use hist_cov_s as past covariates)
 
-    # model.fit(hist_s, future_covariates=hist_cov_s)
-
-
-
-    # Forecast to 2099: we must pass FUTURE covariates that start right after hist.end_time()
-    # forecast_start = hist.end_time() + pd.Timedelta(days=1)
-    # forecast_start = train_sub.end_time() - pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1)
-    # forecast_end = full_cov.end_time()
-    # future_cov_for_forecast = full_cov_s.slice(forecast_start, forecast_end)
+    if model_name == "TFT":
+        fc_scaled = model.predict(n=config.months_to_2099, future_covariates=full_cov_s)
 
 
-    # months_to_2099 = (2099 - hist.end_time().year) * 12 + (12 - hist.end_time().month + 1)
-
-
-    fc_scaled = model.predict(n=config.months_to_2099, past_covariates=full_cov_s)
-    if use_scaler:
-        fc = scaler.inverse_transform(fc_scaled)
     else:
-        fc = fc_scaled
+        fc_scaled = model.predict(n=config.months_to_2099, past_covariates=full_cov_s)
+
+    fc = scaler.inverse_transform(fc_scaled) if use_scaler else fc_scaled
+
 
 
     return {
     "metrics": metrics,
-    # "hist":hist,
     "test_pred": pred,
     "test_obs": test,
     "forecast_to_2099": fc,
@@ -754,14 +765,15 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
+        self.long_horizon = 909
         self.window_size = 15
         self.num_epochs = 170
-        self.input_folder = "./Data/python_spi"
+        self.input_folder = "./Data/maindata"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
-        self.lstm_dropout = 0.01
+        self.lstm_dropout = 0.1
         self.lstm_layers = 2
 
         ts = datetime.datetime.now().strftime("%m%d%H%M")
@@ -797,7 +809,7 @@ if __name__ == "__main__":
         config.months_to_2099 = (2099 - last_date.year) * 12 + (12 - last_date.month+1)
         config.station = station
 
-        full_cov, hist_cov = build_future_covariates(df, config)
+        full_cov = build_future_covariates(df, config)
 
         best_results = []
         for spi in config.SPI:
@@ -815,7 +827,7 @@ if __name__ == "__main__":
                 # hist_cov_aligned = hist_cov.slice_intersect(hist)
 
                 results = train_and_forecast_spi(hist, full_cov, config, model_name)     
-                print("Test metrics:", results["metrics"])
+                # print("Test metrics:", results["metrics"])
                 test = results["test_obs"]
                 pred = results["test_pred"]
                 fc = results["forecast_to_2099"]
@@ -828,9 +840,9 @@ if __name__ == "__main__":
                 # out_df.to_csv(out_path, index=True)
                 # print("Saved forecast to", out_path)
 
-                # plot_scatter(observed, predicted, station, spi, model_name, config)
-                # plot_residual_distribution(observed, predicted, station, spi, model_name, config)
-                # plot_rolling_error(observed, predicted, test_raw.time_index, station, spi, model_name, config)
+                # plot_scatter(test, pred, station, spi, model_name, config)
+                # plot_residual_distribution(test, pred, station, spi, model_name, config)
+                # plot_rolling_error(test, pred, test.time_index, station, spi, model_name, config)
                 
                 
 
@@ -847,7 +859,7 @@ if __name__ == "__main__":
                 ax.set_ylabel(spi)
                 ax.text(0.02, 0.95, metrics_text,transform=ax.transAxes,fontsize=10,verticalalignment="top",
                             bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",facecolor="white", alpha=0.7))
-                ax.axhline(-1.5, color="black", linestyle="--", alpha=0.5)
+                # ax.axhline(-1.5, color="black", linestyle="--", alpha=0.5)
                 ax.axvspan(pred.time_index.min(), pred.time_index.max(),color='gray', alpha=0.1, label="Test period")
                 ax.grid(True, alpha=0.3)
                 ax.legend()
@@ -866,7 +878,7 @@ if __name__ == "__main__":
                 ax.set_title(f"{station} {spi} {model_name}")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
-                ax.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
+                # ax.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
                 ax.grid(True)
                 ax.legend()
 
