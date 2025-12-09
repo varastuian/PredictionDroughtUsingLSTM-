@@ -328,7 +328,7 @@ def plot_final_forecasts(station, results, outfile):
         f = forecast.values().flatten()
         axes[i].plot(res["forecast"].time_index, f, lw=0.7, color="green", label="Forecast")
 
-        axes[i].set_title(f"{spi} — Best: {res['model']}\nRMSE={res['rmse']:.2f}, r={res['corr']:.2f}", fontsize=10)
+        axes[i].set_title(f"{spi} — Best: {res['model']}\nRMSE={res['rmse']:.2f}, r={res['corr'][0]:.2f}", fontsize=10)
         axes[i].grid(True, linestyle="--", alpha=0.5)
         axes[i].legend(fontsize=8)
 
@@ -711,12 +711,15 @@ def train_and_forecast_spi(hist, full_cov, config, model_name):
     use_scaler = model_name in ["SVR", "LSTM","WTLSTM"]
     if use_scaler:
         scaler = Scaler()
+        hist_s = scaler.fit_transform(hist)
         train_s = scaler.fit_transform(train)
+    
     
         cov_scaler = Scaler()
         full_cov_s = cov_scaler.fit_transform(full_cov)
     else:
         scaler = None
+        hist_s = hist, 
         train_s = train, 
         full_cov_s = full_cov
 
@@ -740,13 +743,17 @@ def train_and_forecast_spi(hist, full_cov, config, model_name):
 
 
     metrics = calculate_metrics(test.values(), pred.values())
+    
+    # model = create_model(model_name, config)
 
-
+    #refit
+    if model_name == "TFT":
+        model.fit(hist_s, future_covariates=full_cov_s)
+    else:
+        model.fit(hist_s, past_covariates=full_cov_s)
 
     if model_name == "TFT":
         fc_scaled = model.predict(n=config.months_to_2099, future_covariates=full_cov_s)
-
-
     else:
         fc_scaled = model.predict(n=config.months_to_2099, past_covariates=full_cov_s)
 
@@ -765,7 +772,6 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        self.long_horizon = 909
         self.window_size = 15
         self.num_epochs = 170
         self.input_folder = "./Data/maindata"
@@ -823,22 +829,11 @@ if __name__ == "__main__":
 
                 df_spi = df[["ds", spi]].dropna().sort_values("ds").reset_index(drop=True)
                 hist = TimeSeries.from_dataframe(df_spi, time_col="ds", value_cols=spi)
-                # Align covariates to history
-                # hist_cov_aligned = hist_cov.slice_intersect(hist)
-
                 results = train_and_forecast_spi(hist, full_cov, config, model_name)     
-                # print("Test metrics:", results["metrics"])
                 test = results["test_obs"]
                 pred = results["test_pred"]
                 fc = results["forecast_to_2099"]
                 metrics = results["metrics"]
-                # hist = results["hist"]
-
-
-                # out_df = fc.to_dataframe()
-                # out_path = os.path.join(config.output_folder, f"{station}_{spi}_{model_name}_forecast_to_2099.csv")
-                # out_df.to_csv(out_path, index=True)
-                # print("Saved forecast to", out_path)
 
                 # plot_scatter(test, pred, station, spi, model_name, config)
                 # plot_residual_distribution(test, pred, station, spi, model_name, config)
@@ -859,8 +854,8 @@ if __name__ == "__main__":
                 ax.set_ylabel(spi)
                 ax.text(0.02, 0.95, metrics_text,transform=ax.transAxes,fontsize=10,verticalalignment="top",
                             bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",facecolor="white", alpha=0.7))
-                # ax.axhline(-1.5, color="black", linestyle="--", alpha=0.5)
                 ax.axvspan(pred.time_index.min(), pred.time_index.max(),color='gray', alpha=0.1, label="Test period")
+                
                 ax.grid(True, alpha=0.3)
                 ax.legend()
                 plt.tight_layout()
@@ -871,14 +866,11 @@ if __name__ == "__main__":
                 # Plot results
                 fig, ax = plt.subplots(figsize=(16, 6))
                 ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
-                ax.plot(pred.time_index, pred.values(), label="Predicted", lw=0.4,
-                        color="red", linestyle="--")
-                ax.plot(fc.time_index, fc.values(), label="Forecast",
-                        lw=0.6, color="green")
+                ax.plot(pred.time_index, pred.values(), label="Predicted", lw=0.4,color="red", linestyle="--")
+                ax.plot(fc.time_index, fc.values(), label="Forecast",lw=0.6, color="green")
                 ax.set_title(f"{station} {spi} {model_name}")
                 ax.set_xlabel("Date")
                 ax.set_ylabel(spi)
-                # ax.axhline(-1.5, color='black', linestyle='--', alpha=0.6)
                 ax.grid(True)
                 ax.legend()
 
