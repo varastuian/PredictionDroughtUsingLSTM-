@@ -332,7 +332,71 @@ def plot_final_forecasts(station, results, outfile):
         axes[i].grid(True, linestyle="--", alpha=0.5)
         axes[i].legend(fontsize=8)
 
-    plt.suptitle(f"Station {station} — Forecasts till 2099", fontsize=16, weight="bold")
+        # ----------------------- Global trend line -----------------------
+        forecast_df = forecast.to_dataframe()
+        x = np.arange(len(forecast_df))
+        y = forecast_df.iloc[:, 0].values
+        dates = forecast_df.index
+
+        coef = np.polyfit(x, y, 1)
+        global_trend = np.polyval(coef, x)
+        m_global, b_global = coef
+
+        axes[i].plot(
+            dates,
+            global_trend,
+            label="Global Trend",
+            linestyle="--",
+            linewidth=2,
+            color="blue",
+        )
+
+        # --- Place trend equation bottom-right near the line ---
+        y_last = global_trend[-1]
+
+        # Offsets based on visible range
+        x_offset = (dates[-1] - dates[0]) * 0.03
+        y_offset = (max(global_trend) - min(global_trend)) * -0.05
+
+        equation = f"y = {m_global:.4f}x + {b_global:.4f}"
+
+        axes[i].annotate(
+            equation,
+            xy=(dates[-1], y_last),
+            xytext=(dates[-1] - x_offset, y_last + y_offset),
+            fontsize=10,
+            color="blue",
+            verticalalignment="top",
+            horizontalalignment="left",
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+        )
+
+        # ----------------------- Decade trend lines -----------------------
+        decade_length = 240  # 10 years
+        n = len(y)
+
+        for start in range(0, n, decade_length):
+            end = min(start + decade_length, n)
+            x_dec = x[start:end]
+            y_dec = y[start:end]
+            date_dec = dates[start:end]
+
+            coef_dec = np.polyfit(x_dec, y_dec, 1)
+            trend_dec = np.polyval(coef_dec, x_dec)
+
+            axes[i].plot(
+                date_dec,
+                trend_dec,
+                linestyle="-",
+                linewidth=2,
+                alpha=0.9,
+                # label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
+            )
+
+        axes[i].legend()
+
+
+    plt.suptitle(f"Station {station}", fontsize=16, weight="bold")
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.savefig(outfile, dpi=300, bbox_inches="tight")
     plt.close()
