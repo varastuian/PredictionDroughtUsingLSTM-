@@ -840,7 +840,7 @@ class ForecastConfig:
         self.num_epochs = 170
         self.input_folder = "./Data/maindata"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
         self.lstm_dropout = 0.1
