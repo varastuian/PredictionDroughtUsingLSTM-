@@ -35,7 +35,7 @@ def plot_raw_data(df, station, config):
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"rawdata_{station}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -50,7 +50,7 @@ def plot_scatter(observed, predicted, station, spi, model, config):
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"scatter_{station}_{spi}_{model}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -63,7 +63,7 @@ def plot_residual_distribution(observed, predicted, station, spi, model, config)
     plt.xlabel("Residual")
     plt.ylabel("Frequency")
     outfile = os.path.join(config.output_folder, f"residuals_{station}_{spi}_{model}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -77,7 +77,7 @@ def plot_rolling_error(observed, predicted, time_index, station, spi, model, con
     plt.xlabel("Date")
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"rollingrmse_{station}_{spi}_{model}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -99,7 +99,7 @@ def plot_seasonal_cycle(hist_ts, forecast_ts, station, spi, config):
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"seasonalcycle_{station}_{spi}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -112,7 +112,7 @@ def plot_metric_boxplots(metrics_df, config):
         plt.grid(True, linestyle="--", alpha=0.6)
         plt.tight_layout()
         outfile = os.path.join(config.output_folder, f"boxplot_{metric}.png")
-        plt.savefig(outfile, dpi=300, bbox_inches="tight")
+        plt.savefig(outfile, dpi=600, bbox_inches="tight")
         plt.close()
 
 
@@ -127,7 +127,7 @@ def plot_model_ranking(metrics_df, config):
     plt.ylabel("Count")
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, "bestmodel_counts.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -144,7 +144,7 @@ def plot_covariate_forecasts(hist_ts, future_ts, covariate: str, config, color: 
     plt.grid(True)
     plt.tight_layout()
     outfile = os.path.join(config.output_folder, f"covariate_{covariate}_{config.station}.png") 
-    plt.savefig(outfile, dpi=300, bbox_inches="tight") 
+    plt.savefig(outfile, dpi=600, bbox_inches="tight") 
     plt.close()
 
 def plot_scatter(observed, predicted, station, spi, model, config):
@@ -159,7 +159,7 @@ def plot_scatter(observed, predicted, station, spi, model, config):
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"scatter_{station}_{spi}_{model}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 def plot_metric_boxplots(metrics_df, config):
@@ -171,7 +171,7 @@ def plot_metric_boxplots(metrics_df, config):
         plt.grid(True, linestyle="--", alpha=0.6)
         plt.tight_layout()
         outfile = os.path.join(config.output_folder, f"boxplot_{metric}.png")
-        plt.savefig(outfile, dpi=300, bbox_inches="tight")
+        plt.savefig(outfile, dpi=600, bbox_inches="tight")
         plt.close()
 
 
@@ -184,7 +184,7 @@ def plot_residual_distribution(observed, predicted, station, spi, model, config)
     plt.xlabel("Residual")
     plt.ylabel("Frequency")
     outfile = os.path.join(config.output_folder, f"residuals_{station}_{spi}_{model}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 def plot_rolling_error(observed, predicted, time_index, station, spi, model, config, window=12):
@@ -197,7 +197,7 @@ def plot_rolling_error(observed, predicted, time_index, station, spi, model, con
     plt.xlabel("Date")
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"rolling_rmse_{station}_{spi}_{model}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -219,7 +219,7 @@ def plot_seasonal_cycle(hist_ts, forecast_ts, station, spi, config):
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, f"seasonal_cycle_{station}_{spi}.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -234,7 +234,7 @@ def plot_model_ranking(metrics_df, config):
     plt.ylabel("Count")
     plt.grid(True, linestyle="--", alpha=0.6)
     outfile = os.path.join(config.output_folder, "best_model_counts.png")
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 def taylor_diagram_panel(config,metrics_df, station, outfile):
@@ -305,7 +305,7 @@ def taylor_diagram_panel(config,metrics_df, station, outfile):
     plt.suptitle(f"Quarter-Circle Taylor Diagrams — Station {station}", fontsize=16, weight="bold", y=0.995)
     plt.subplots_adjust(bottom=0.08)  
 
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 def plot_final_forecasts(station, results, outfile):
@@ -398,7 +398,7 @@ def plot_final_forecasts(station, results, outfile):
 
     plt.suptitle(f"Station {station}", fontsize=16, weight="bold")
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 def plot_heatmaps(station, results, outfile):
@@ -449,7 +449,7 @@ def plot_heatmaps(station, results, outfile):
 
     plt.suptitle(f"SPI Heatmaps — Station {station}", fontsize=16, weight="bold")
     # plt.tight_layout(rect=[0, 0, 0.9, 0.96])
-    plt.savefig(outfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
 
@@ -840,7 +840,7 @@ class ForecastConfig:
         self.num_epochs = 170
         self.input_folder = "./Data/maindata"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
-        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
+        self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM"]
         self.train_test_split = 0.8
         self.lstm_hidden_dim = 64
         self.lstm_dropout = 0.1
@@ -924,7 +924,7 @@ if __name__ == "__main__":
                 ax.legend()
                 plt.tight_layout()
                 outfile = os.path.join(config.output_folder,f"{station}_{spi}_{model_name}_historical.png")
-                fig.savefig(outfile, dpi=300, bbox_inches="tight")
+                fig.savefig(outfile, dpi=600, bbox_inches="tight")
                 plt.close()                    
 
                 # Plot results
@@ -1013,7 +1013,7 @@ if __name__ == "__main__":
                 # ----------------------- Save -----------------------
                 outfile = os.path.join(config.output_folder,
                                     f"{station}_{spi}_{model_name}.png")
-                fig.savefig(outfile, dpi=300, bbox_inches="tight")
+                fig.savefig(outfile, dpi=600, bbox_inches="tight")
                 plt.close()
 
                 res = {
