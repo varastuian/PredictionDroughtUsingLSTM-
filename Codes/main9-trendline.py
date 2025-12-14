@@ -452,6 +452,33 @@ def plot_heatmaps(station, results, outfile):
     plt.savefig(outfile, dpi=600, bbox_inches="tight")
     plt.close()
 
+def compute_score(df, weights=None):
+    if weights is None:
+        weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
+
+    def normalize(x):
+        rng = x.max() - x.min()
+        return np.zeros_like(x) if rng < 1e-8 else (x - x.min()) / rng
+
+    df = df.copy()
+
+    df["corr_scalar"] = df["corr"].apply(
+        lambda x: x[0] if isinstance(x, (list, np.ndarray)) else x
+    )
+
+    df["rmse_n"] = df.groupby(["station", "spi"])["rmse"].transform(normalize)
+    df["crmse_n"] = df.groupby(["station", "spi"])["crmse"].transform(normalize)
+    df["corr_n"] = df.groupby(["station", "spi"])["corr_scalar"].transform(normalize)
+
+    df["score"] = (
+        weights["rmse"] * df["rmse_n"] +
+        weights["crmse"] * df["crmse_n"] -
+        weights["corr"] * df["corr_n"]
+    )
+
+    return df
+
+
 
 def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dict:
     if weights is None:
@@ -838,7 +865,7 @@ class ForecastConfig:
         self.horizon =  3
         self.window_size = 15
         self.num_epochs = 170
-        self.input_folder = "./Data/maindata"
+        self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
         self.train_test_split = 0.8
@@ -1055,6 +1082,13 @@ if __name__ == "__main__":
     # Save metrics and create Taylor diagrams
     if all_results:
         metrics_df = pd.DataFrame(all_results)
+        metrics_df = compute_score(metrics_df)
+        metrics_df["best"] = (
+            metrics_df.groupby(["station", "spi"])["score"]
+            .transform(lambda x: x == x.min())
+            .map({True: "✓", False: ""})
+        )
+
         metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
         
         for station in metrics_df["station"].unique():
