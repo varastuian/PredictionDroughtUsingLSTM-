@@ -302,7 +302,7 @@ def taylor_diagram_panel(config,metrics_df, station, outfile):
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=min(6, len(labels)), bbox_to_anchor=(0.5, 0.98))
 
-    plt.suptitle(f"Quarter-Circle Taylor Diagrams — Station {station}", fontsize=16, weight="bold", y=0.995)
+    plt.suptitle(f"Taylor Diagram — Station {station}", fontsize=16, weight="bold", y=0.995)
     plt.subplots_adjust(bottom=0.08)  
 
     plt.savefig(outfile, dpi=600, bbox_inches="tight")
@@ -857,6 +857,113 @@ class ForecastConfig:
         np.random.seed(self.SEED)
 
 
+def plot_each_forecast(config, station, spi, model_name, hist, pred, fc, metrics_text):
+    fig, ax = plt.subplots(figsize=(16, 6))
+    ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
+    ax.plot(pred.time_index,pred.values(),label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
+    ax.set_title(f"{station} {spi} {model_name} ")
+    ax.set_xlabel("Date")
+    ax.set_ylabel(spi)
+    ax.text(0.02, 0.95, metrics_text,transform=ax.transAxes,fontsize=10,verticalalignment="top",
+                            bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",facecolor="white", alpha=0.7))
+    ax.axvspan(pred.time_index.min(), pred.time_index.max(),color='gray', alpha=0.1, label="Test period")
+                
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    outfile = os.path.join(config.output_folder,f"{station}_{spi}_{model_name}_historical.png")
+    fig.savefig(outfile, dpi=600, bbox_inches="tight")
+    plt.close()                    
+
+                # Plot results
+    fig, ax = plt.subplots(figsize=(16, 6))
+    ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
+    ax.plot(pred.time_index, pred.values(), label="Predicted", lw=0.4,color="red", linestyle="--")
+    ax.plot(fc.time_index, fc.values(), label="Forecast",lw=0.6, color="green")
+    ax.set_title(f"{station} {spi} {model_name}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel(spi)
+    ax.grid(True)
+    ax.legend()
+
+    ax.text(
+                    0.02, 0.95, metrics_text,
+                    transform=ax.transAxes,
+                    fontsize=10,
+                    verticalalignment="top",
+                    bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",
+                            facecolor="white", alpha=0.7)
+                )
+
+                # ----------------------- Global trend line -----------------------
+    forecast_df = fc.to_dataframe()
+    x = np.arange(len(forecast_df))
+    y = forecast_df.iloc[:, 0].values
+    dates = forecast_df.index
+
+    coef = np.polyfit(x, y, 1)
+    global_trend = np.polyval(coef, x)
+    m_global, b_global = coef
+
+    ax.plot(
+                    dates,
+                    global_trend,
+                    label="Global Trend",
+                    linestyle="--",
+                    linewidth=2,
+                    color="blue",
+                )
+
+                # --- Place trend equation bottom-right near the line ---
+    y_last = global_trend[-1]
+
+                # Offsets based on visible range
+    x_offset = (dates[-1] - dates[0]) * 0.03
+    y_offset = (max(global_trend) - min(global_trend)) * -0.05
+
+    equation = f"y = {m_global:.4f}x + {b_global:.4f}"
+
+    ax.annotate(
+                    equation,
+                    xy=(dates[-1], y_last),
+                    xytext=(dates[-1] - x_offset, y_last + y_offset),
+                    fontsize=10,
+                    color="blue",
+                    verticalalignment="top",
+                    horizontalalignment="left",
+                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+                )
+
+                # ----------------------- Decade trend lines -----------------------
+    decade_length = 240  # 10 years
+    n = len(y)
+
+    for start in range(0, n, decade_length):
+        end = min(start + decade_length, n)
+        x_dec = x[start:end]
+        y_dec = y[start:end]
+        date_dec = dates[start:end]
+
+        coef_dec = np.polyfit(x_dec, y_dec, 1)
+        trend_dec = np.polyval(coef_dec, x_dec)
+
+        ax.plot(
+                        date_dec,
+                        trend_dec,
+                        linestyle="-",
+                        linewidth=2,
+                        alpha=0.9,
+                        # label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
+                    )
+
+    ax.legend()
+
+                # ----------------------- Save -----------------------
+    outfile = os.path.join(config.output_folder,
+                                    f"{station}_{spi}_{model_name}.png")
+    fig.savefig(outfile, dpi=600, bbox_inches="tight")
+    plt.close()
+
 if __name__ == "__main__":
     config = ForecastConfig()
     all_results = []
@@ -908,113 +1015,9 @@ if __name__ == "__main__":
                 corr_val = metrics['corr'][0]
                 rmse_val = metrics['rmse']
 
-                metrics_text = f"RMSE: {rmse_val:.3f}\nCorr: {corr_val:.3f}"
+                # metrics_text = f"RMSE: {rmse_val:.3f}\nCorr: {corr_val:.3f}"
                 
-                fig, ax = plt.subplots(figsize=(16, 6))
-                ax.plot(hist.time_index,hist.values(),label="Historical",lw=0.8)
-                ax.plot(pred.time_index,pred.values(),label="Predicted (Test)",lw=0.8,linestyle="--",color="red")
-                ax.set_title(f"{station} {spi} {model_name} ")
-                ax.set_xlabel("Date")
-                ax.set_ylabel(spi)
-                ax.text(0.02, 0.95, metrics_text,transform=ax.transAxes,fontsize=10,verticalalignment="top",
-                            bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",facecolor="white", alpha=0.7))
-                ax.axvspan(pred.time_index.min(), pred.time_index.max(),color='gray', alpha=0.1, label="Test period")
-                
-                ax.grid(True, alpha=0.3)
-                ax.legend()
-                plt.tight_layout()
-                outfile = os.path.join(config.output_folder,f"{station}_{spi}_{model_name}_historical.png")
-                fig.savefig(outfile, dpi=600, bbox_inches="tight")
-                plt.close()                    
-
-                # Plot results
-                fig, ax = plt.subplots(figsize=(16, 6))
-                ax.plot(hist.time_index, hist.values(), label="Historical", lw=0.6)
-                ax.plot(pred.time_index, pred.values(), label="Predicted", lw=0.4,color="red", linestyle="--")
-                ax.plot(fc.time_index, fc.values(), label="Forecast",lw=0.6, color="green")
-                ax.set_title(f"{station} {spi} {model_name}")
-                ax.set_xlabel("Date")
-                ax.set_ylabel(spi)
-                ax.grid(True)
-                ax.legend()
-
-                ax.text(
-                    0.02, 0.95, metrics_text,
-                    transform=ax.transAxes,
-                    fontsize=10,
-                    verticalalignment="top",
-                    bbox=dict(boxstyle="round,pad=0.3", edgecolor="black",
-                            facecolor="white", alpha=0.7)
-                )
-
-                # ----------------------- Global trend line -----------------------
-                forecast_df = fc.to_dataframe()
-                x = np.arange(len(forecast_df))
-                y = forecast_df.iloc[:, 0].values
-                dates = forecast_df.index
-
-                coef = np.polyfit(x, y, 1)
-                global_trend = np.polyval(coef, x)
-                m_global, b_global = coef
-
-                ax.plot(
-                    dates,
-                    global_trend,
-                    label="Global Trend",
-                    linestyle="--",
-                    linewidth=2,
-                    color="blue",
-                )
-
-                # --- Place trend equation bottom-right near the line ---
-                y_last = global_trend[-1]
-
-                # Offsets based on visible range
-                x_offset = (dates[-1] - dates[0]) * 0.03
-                y_offset = (max(global_trend) - min(global_trend)) * -0.05
-
-                equation = f"y = {m_global:.4f}x + {b_global:.4f}"
-
-                ax.annotate(
-                    equation,
-                    xy=(dates[-1], y_last),
-                    xytext=(dates[-1] - x_offset, y_last + y_offset),
-                    fontsize=10,
-                    color="blue",
-                    verticalalignment="top",
-                    horizontalalignment="left",
-                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-                )
-
-                # ----------------------- Decade trend lines -----------------------
-                decade_length = 240  # 10 years
-                n = len(y)
-
-                for start in range(0, n, decade_length):
-                    end = min(start + decade_length, n)
-                    x_dec = x[start:end]
-                    y_dec = y[start:end]
-                    date_dec = dates[start:end]
-
-                    coef_dec = np.polyfit(x_dec, y_dec, 1)
-                    trend_dec = np.polyval(coef_dec, x_dec)
-
-                    ax.plot(
-                        date_dec,
-                        trend_dec,
-                        linestyle="-",
-                        linewidth=2,
-                        alpha=0.9,
-                        # label=f"Decade Trend {date_dec[0].year}-{date_dec[-1].year}"
-                    )
-
-                ax.legend()
-
-                # ----------------------- Save -----------------------
-                outfile = os.path.join(config.output_folder,
-                                    f"{station}_{spi}_{model_name}.png")
-                fig.savefig(outfile, dpi=600, bbox_inches="tight")
-                plt.close()
+                # plot_each_forecast(config, station, spi, model_name, hist, pred, fc, metrics_text)
 
                 res = {
                     "spi": spi,
@@ -1056,8 +1059,8 @@ if __name__ == "__main__":
         
         for station in metrics_df["station"].unique():
             taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
-        plot_metric_boxplots(metrics_df, config)
-        plot_model_ranking(metrics_df, config)
+        # plot_metric_boxplots(metrics_df, config)
+        # plot_model_ranking(metrics_df, config)
 
 
 
