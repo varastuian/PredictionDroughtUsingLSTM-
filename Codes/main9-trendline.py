@@ -895,7 +895,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 15
-        self.num_epochs = 10
+        self.num_epochs = 170
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
@@ -1031,8 +1031,8 @@ if __name__ == "__main__":
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        if station != "40726":
-            continue
+        # if station != "40726":
+        #     continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
@@ -1114,11 +1114,23 @@ if __name__ == "__main__":
     if all_results:
         metrics_df = pd.DataFrame(all_results)
         metrics_df = compute_score(metrics_df)
-        metrics_df["best"] = (
-            metrics_df.groupby(["station", "spi"])["score"]
-            .transform(lambda x: x == x.min())
-            .map({True: "✓", False: ""})
+        metrics_df["score"] = metrics_df["score"].apply(
+        lambda x: float(x[0]) if isinstance(x, (list, np.ndarray)) else float(x)
+    )
+        metrics_df["best"] = ""
+        idx = (
+            metrics_df
+            .groupby(["station", "spi"])["score"]
+            .idxmin()
         )
+
+        metrics_df.loc[idx, "best"] = "✓"
+
+        # metrics_df["best"] = (
+        #     metrics_df.groupby(["station", "spi"])["score"]
+        #     .transform(lambda x: x == x.min())
+        #     .map({True: "✓", False: ""})
+        # )
 
         metrics_df.to_csv(os.path.join(config.output_folder, "summary_metrics.csv"), index=False)
         
