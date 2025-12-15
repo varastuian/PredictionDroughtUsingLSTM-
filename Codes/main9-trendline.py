@@ -593,8 +593,25 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
         "mae": mae_val,
         "mape": mape_val
     }
+def remove_outliers_iqr(df, col):
+    Q1 = df[col].quantile(0.25)
+    Q3 = df[col].quantile(0.75)
+    IQR = Q3 - Q1
 
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQR
 
+    return df[(df[col] >= lower) & (df[col] <= upper)]
+
+def fix_outliers_rolling(df, col, window=12, k=3):
+    rolling_mean = df[col].rolling(window, center=True).mean()
+    rolling_std = df[col].rolling(window, center=True).std()
+
+    upper = rolling_mean + k * rolling_std
+    lower = rolling_mean - k * rolling_std
+
+    df[col] = df[col].clip(lower=lower, upper=upper)
+    return df
 def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
 
     # year as numeric attribute then scaled
@@ -613,13 +630,27 @@ def build_cyclic_covariates(time_index: pd.DatetimeIndex) -> TimeSeries:
     # covariates = year_ts.stack(month_sin_cos_ts)
     covariates = month_sin_cos_ts
     return covariates
+def fix_precip_spikes(df, col, max_mm=400):
+    df = df.copy()
 
+    # detect spikes
+    spike_mask = df[col] > max_mm
+
+    # replace spike with rolling median (robust)
+    rolling_med = df[col].rolling(12, center=True).median()
+
+    df.loc[spike_mask, col] = rolling_med[spike_mask]
+
+    return df
 # -------------------------------
 # Forecast single covariate to 2099
 # -------------------------------
 def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
     
     df_local = df.copy().sort_values("ds").reset_index(drop=True)
+    # df_local = remove_outliers_iqr(df_local, col)
+    # df_local = fix_outliers_rolling(df_local, col)
+    df_local = fix_precip_spikes(df_local, col, max_mm=200)
 
     series = TimeSeries.from_dataframe(df_local, 'ds', col)
 
@@ -864,7 +895,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 15
-        self.num_epochs = 170
+        self.num_epochs = 10
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
@@ -1000,8 +1031,8 @@ if __name__ == "__main__":
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        # if station != "40700":
-        #     continue
+        if station != "40726":
+            continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
