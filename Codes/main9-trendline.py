@@ -462,57 +462,59 @@ def compute_score(df, weights=None):
 
     df = df.copy()
 
-    df["corr_scalar"] = df["corr"].apply(
-        lambda x: x[0] if isinstance(x, (list, np.ndarray)) else x
-    )
 
     df["rmse_n"] = df.groupby(["station", "spi"])["rmse"].transform(normalize)
     df["crmse_n"] = df.groupby(["station", "spi"])["crmse"].transform(normalize)
-    df["corr_n"] = df.groupby(["station", "spi"])["corr_scalar"].transform(normalize)
 
+    # invert correlation (benefit → cost)
+    df["corr_inv"] = 1 - df["corr"]
+    df["corr_n"] = df.groupby(["station", "spi"])["corr_inv"].transform(normalize)
+
+    # final score (lower = better)
     df["score"] = (
         weights["rmse"] * df["rmse_n"] +
-        weights["crmse"] * df["crmse_n"] -
+        weights["crmse"] * df["crmse_n"] +
         weights["corr"] * df["corr_n"]
     )
+
 
     return df
 
 
 
-def pick_best_model(models: List[Dict], weights: Dict[str, float] = None) -> Dict:
+def pick_best_model(model_results, weights=None):
+    df = pd.DataFrame(model_results)
+
+    # for col in ["rmse", "crmse", "corr"]:
+    #     df[col] = df[col].astype(float)
+
+    # Since we're comparing models for the same SPI/station, normalize across all models
     if weights is None:
         weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
 
-    # Filter out None results
-    valid_models = [m for m in models if m is not None]
-    if not valid_models:
-        return None
+    def normalize(x):
+        rng = x.max() - x.min()
+        return np.zeros_like(x) if rng < 1e-8 else (x - x.min()) / rng
 
-    # Extract metric arrays
-    # rmse_vals = np.array([m["rmse"] for m in valid_models])
-    # crmse_vals = np.array([m["crmse"] for m in valid_models])
-    # corr_vals = np.array([m["corr"] for m in valid_models])
-    print(m for m in valid_models)
-    rmse_vals = np.array([float(m["rmse"]) for m in valid_models])
-    crmse_vals = np.array([float(m["crmse"]) for m in valid_models])
-    corr_vals = np.array([float(m["corr"]) for m in valid_models])
+    df = df.copy()
 
+    # Normalize across all models (no groupby since all are for same SPI)
+    df["rmse_n"] = normalize(df["rmse"])
+    df["crmse_n"] = normalize(df["crmse"])
 
-    # Normalize metrics
-    rmse_norm = (rmse_vals - rmse_vals.min()) / (rmse_vals.max() - rmse_vals.min() + 1e-8)
-    crmse_norm = (crmse_vals - crmse_vals.min()) / (crmse_vals.max() - crmse_vals.min() + 1e-8)
-    corr_norm = (corr_vals - corr_vals.min()) / (corr_vals.max() - corr_vals.min() + 1e-8)
+    # invert correlation (benefit → cost)
+    df["corr_inv"] = 1 - df["corr"]
+    df["corr_n"] = normalize(df["corr_inv"])
 
+    # final score (lower = better)
+    df["score"] = (
+        weights["rmse"] * df["rmse_n"] +
+        weights["crmse"] * df["crmse_n"] +
+        weights["corr"] * df["corr_n"]
+    )
 
-
-    # Compute combined score (lower is better)
-    scores = (weights["rmse"] * rmse_norm + 
-              weights["crmse"] * crmse_norm - 
-              weights["corr"] * corr_norm)
-
-    best_idx = np.argmin(scores)
-    return valid_models[best_idx]
+    best_idx = df["score"].idxmin()
+    return model_results[best_idx]
 
 def apply_reverse_wavelet(pred_ts, wavelet_info):
     wavelet = wavelet_info["wavelet"]
@@ -895,7 +897,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 15
-        self.num_epochs = 170
+        self.num_epochs = 1
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
@@ -1031,8 +1033,8 @@ if __name__ == "__main__":
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        # if station != "40726":
-        #     continue
+        if station != "40712":
+            continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
@@ -1096,6 +1098,7 @@ if __name__ == "__main__":
                     **{k: v for k, v in res.items() if k not in ["forecast", "pred", "series", "scaler"]}
                 })
             
+
             # Select best model for this SPI
             best_model = pick_best_model(model_metrics)
             if best_model:
@@ -1113,10 +1116,12 @@ if __name__ == "__main__":
     # Save metrics and create Taylor diagrams
     if all_results:
         metrics_df = pd.DataFrame(all_results)
+        for col in ["rmse", "crmse", "corr"]:
+            metrics_df[col] = metrics_df[col].astype(float)
         metrics_df = compute_score(metrics_df)
-        metrics_df["score"] = metrics_df["score"].apply(
-        lambda x: float(x[0]) if isinstance(x, (list, np.ndarray)) else float(x)
-    )
+    #     metrics_df["score"] = metrics_df["score"].apply(
+    #     lambda x: float(x[0]) if isinstance(x, (list, np.ndarray)) else float(x)
+    # )
         metrics_df["best"] = ""
         idx = (
             metrics_df
@@ -1138,13 +1143,6 @@ if __name__ == "__main__":
             taylor_diagram_panel(config,metrics_df, station, os.path.join(config.output_folder, f"taylor_{station}.png"))
         # plot_metric_boxplots(metrics_df, config)
         # plot_model_ranking(metrics_df, config)
-
-
-
-                
-
-
-               
     
     print(f"✅ Done! Results saved in: {config.output_folder}")
 

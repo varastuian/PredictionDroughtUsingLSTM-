@@ -2,6 +2,19 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import pandas as pd
+from docx.shared import RGBColor
+from docx.shared import Pt
+import numpy as np
+def set_cell_font(cell, size_pt=8, bold=False):
+    for paragraph in cell.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(size_pt)
+            run.font.bold = bold
+
+def set_cell_text_green(cell):
+    for paragraph in cell.paragraphs:
+        for run in paragraph.runs:
+            run.font.color.rgb = RGBColor(0, 176, 80)  # Word green
 
 def set_cell_width(cell, width_twips):
     tc = cell._tc
@@ -35,22 +48,40 @@ def add_full_row_top_border(row):
         tcPr.append(tcBorders)
 
 # --- Load Data ---
-df = pd.read_csv(r"Results/r18/summary_metrics.csv")
+df = pd.read_csv(r"Results/12151716_e170-hd64-l2-d0.1-h3/summary_metrics.csv")
+def normalize_and_round(x):
+    # string like "[0.05888152]"
+    if isinstance(x, str):
+        x = x.strip()
+        if x.startswith('[') and x.endswith(']'):
+            x = x[1:-1]
 
-metrics_cols = ["std_ref","std_model","rmse","corr","crmse","mae","mape"]
-df[metrics_cols] = df[metrics_cols].applymap(
-    lambda x: round(x, 3) if isinstance(x, (int, float)) else x
-)
+    # list / ndarray
+    if isinstance(x, (list, np.ndarray)):
+        x = x[0]
 
-# Timescale order
+    # numpy scalar
+    if isinstance(x, np.generic):
+        x = x.item()
+
+    try:
+        return round(float(x), 1)
+    except (TypeError, ValueError):
+        return np.nan
+metrics_cols = ["std_ref","std_model","rmse","corr","crmse","mape","score"]
+df[metrics_cols] = df[metrics_cols].applymap(normalize_and_round)
+
+
+
+# Timescale order   
 timescale_order = ["SPI_1","SPI_3","SPI_6","SPI_9","SPI_12","SPI_24"]
 df["spi"] = pd.Categorical(df["spi"], categories=timescale_order, ordered=True)
 
 # --- Create Document ---
 doc = Document()
 
-cols = ["Station", "Timescale", "Std Ref", "Model","Std Model","RMSE","Corr","CRMSE","MAE","MAPE"]
-cell_widths = [2000, 2000, 1500, 2000, 2000, 1200, 864, 1200, 1200, 1200]
+cols = ["Station", "Timescale", "Std Ref", "Model","Std Model","RMSE","Corr","CRMSE","Score"]
+cell_widths = [2030, 2050, 2500, 2000, 2000, 1200, 1200, 1200, 1200, 1200]
 
 # Add header
 table = doc.add_table(rows=1, cols=len(cols))
@@ -58,6 +89,10 @@ table.style = None
 for i, col in enumerate(cols):
     table.rows[0].cells[i].text = col
     set_cell_width(table.rows[0].cells[i], cell_widths[i])
+    header_cell = table.rows[0].cells[i]
+    header_cell.text = col
+    set_cell_width(header_cell, cell_widths[i])
+    set_cell_font(header_cell, size_pt=8.5, bold=True)
 
 # --- Fill Table ---
 for station, station_group in df.groupby("station"):
@@ -66,19 +101,27 @@ for station, station_group in df.groupby("station"):
     for spi, spi_group in station_group.groupby("spi", sort=False):
         timescale_start_idx = len(table.rows)
         stdref_start_idx = None
+        min_score = spi_group["score"].min()
 
         for idx, (_, r) in enumerate(spi_group.iterrows()):
             row = table.add_row().cells
             if idx == 0:
-                row[1].text = str(spi)          # Timescale only once
+                # row[1].text = str(spi)       
+                row[1].text = str(int(spi.split("_")[1]))
+
                 row[2].text = str(r["std_ref"]) # Std Ref only once
                 stdref_start_idx = len(table.rows)-1
             row[3].text = str(r["model"])
-            for j, col in enumerate(["std_model","rmse","corr","crmse","mae","mape"], start=4):
+            for j, col in enumerate(["std_model","rmse","corr","crmse","score"], start=4):
                 row[j].text = str(r[col])
                 row[j].paragraphs[0].alignment = 2
+            # --- Highlight lowest score model ---
+            if r["score"] == min_score:
+                set_cell_text_green(row[3])
+
             for k, cell in enumerate(row):
                 set_cell_width(cell, cell_widths[k])
+                # set_cell_font(cell, size_pt=8)   # <<< key change
                 remove_all_borders(cell)
 
         end_idx = len(table.rows)-1
@@ -100,4 +143,4 @@ for station, station_group in df.groupby("station"):
 
 # --- Save ---
 doc.save("Results/table_results_clean.docx")
-print("Created Results/table_results_clean.docx")
+print("✅ done")
