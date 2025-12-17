@@ -1,0 +1,159 @@
+# Improved Methodology Section for Drought Prediction Paper
+
+## 1. Data Preprocessing and Preparation
+
+In the initial phase, comprehensive data preprocessing was essential to prepare the downloaded dataset for advanced time series analysis. This involved several critical steps to ensure data quality and consistency:
+
+### 1.1 Data Integration and Cleaning
+Multiple separate CSV files, each containing partial meteorological data for individual stations, were merged to create complete 34-year records (1985-2019) for each station. The combined datasets were then sorted chronologically by both temporal order and station identifier to maintain proper time series continuity.
+
+### 1.2 Missing Data Handling
+Monthly precipitation and temperature time series were extracted from the historical records. Any months with missing values were systematically excluded from the analysis to maintain data integrity. This conservative approach ensured that all subsequent analyses were based on complete, reliable data sequences.
+
+### 1.3 Station-wise Processing
+Data from each station were processed independently to enable localized model fitting and account for spatial variability in meteorological patterns. This approach recognizes that drought characteristics can vary significantly across different geographical locations.
+
+## 2. Standardized Precipitation Index (SPI) Computation
+
+The Standardized Precipitation Index (SPI) was computed following a rigorous probabilistic approach to quantify drought conditions across multiple temporal scales.
+
+### 2.1 Probability Distribution Fitting
+Monthly precipitation data at each station were modeled using the gamma probability distribution, selected for its suitability in representing positively skewed hydrological data. Shape and scale parameters were estimated using Maximum Likelihood Estimation (MLE), providing robust statistical fitting for the precipitation distribution.
+
+### 2.2 Zero Precipitation Handling
+The probability of zero precipitation events was explicitly accounted for to accurately represent dry periods, which are critical for drought assessment. This adjustment ensures proper representation of the complete precipitation distribution, including extreme dry conditions.
+
+### 2.3 SPI Transformation
+The gamma Cumulative Distribution Function (CDF) was computed for each precipitation value. To incorporate zero precipitation probabilities, the CDF was adjusted accordingly. The adjusted cumulative probabilities were then transformed into standardized SPI values using the inverse standard normal distribution function (Z-transform). This normalization enables consistent drought severity assessment across different climates and locations.
+
+### 2.4 Multi-scale SPI Computation
+SPI was computed for multiple accumulation periods (1-, 3-, 6-, 9-, 12-, and 24-months) to capture both short-term meteorological droughts and long-term hydrological droughts. This multi-scale approach provides comprehensive drought characterization essential for water resource management and agricultural planning.
+
+## 3. Future Covariate Projection Using LSTM
+
+A sophisticated baseline LSTM model was employed to project meteorological covariates into the future, enabling SPI forecasting under climate change scenarios.
+
+### 3.1 Covariate Selection and Preparation
+Historical temperature and precipitation data were identified as primary covariates influencing SPI dynamics. These covariates were prepared for long-term projection to support century-scale drought forecasting.
+
+### 3.2 LSTM-based Projection Model
+The LSTM model was configured with a 24-month input window to capture seasonal and inter-annual climate patterns. The model was trained on complete historical covariate time series (1985-2019) using 50 epochs with early stopping to prevent overfitting. Key hyperparameters included:
+- Hidden dimension: 128 units
+- Dropout rate: 0.2
+- Learning rate: 0.001
+- Batch size: 32
+
+### 3.3 Future Scenario Generation
+The trained LSTM model projected temperature and precipitation covariates to the year 2099, generating 80 years of future climate data. This approach ensures that SPI forecasts account for evolving climate conditions rather than assuming stationary meteorological patterns.
+
+### 3.4 Integrated Covariate Time Series
+Historical and projected covariates were seamlessly combined to create continuous time series spanning from 1985 to 2099. Cyclic temporal features (month and year encodings) were incorporated to capture seasonal and long-term trends, enhancing the model's ability to recognize complex temporal dependencies.
+
+## 4. Signal Processing and Feature Engineering
+
+Advanced signal processing techniques were applied to enhance model performance and feature representation.
+
+### 4.1 Wavelet Decomposition for Denoising
+Level-one wavelet decomposition using the Daubechies 4 (db4) wavelet was implemented for signal denoising, following recent applications in hydrological time series analysis (Das et al., 2020). However, recognizing that SPI values represent important drought signal information, a conservative denoising approach was adopted. The threshold was reduced by 50% compared to the universal threshold to preserve critical drought patterns while reducing noise.
+
+### 4.2 Temporal Feature Construction
+To capture temporal dependencies in drought dynamics, up to 24 monthly lagged SPI values were incorporated as predictors. Concurrent precipitation and temperature served as exogenous inputs, providing real-time meteorological context for SPI predictions.
+
+## 5. Machine Learning Model Development
+
+A comprehensive suite of machine learning models was implemented to capture complex patterns in precipitation-driven drought time series.
+
+### 5.1 Model Selection and Configuration
+Five different modeling approaches were employed:
+- **Random Forest (RF)**: Ensemble method with 100 trees
+- **Extra Trees**: High-variance ensemble for robust predictions
+- **Support Vector Regression (SVR)**: Kernel-based method with RBF kernel
+- **Long Short-Term Memory (LSTM)**: Deep learning for temporal dependencies
+- **Wavelet-Transformed LSTM (WTLSTM)**: LSTM trained on denoised wavelet components
+
+### 5.2 Data Partitioning Strategy
+For robust model evaluation, a 70-20-10 split was implemented:
+- 70% training set (1985-2013)
+- 20% validation set (2014-2019)
+- 10% test set (2020-2024)
+
+This partitioning ensures sufficient data for training while maintaining adequate evaluation periods.
+
+### 5.3 Scaling and Preprocessing
+Data scaling was applied selectively based on model requirements:
+- Neural network models (LSTM, WTLSTM) and SVR underwent standardization
+- Tree-based models (RF, Extra Trees) operated on original scales due to scale invariance
+
+### 5.4 Hyperparameter Optimization
+Models were configured with optimized hyperparameters:
+- Input window: 24 months
+- Output horizon: 3 months
+- Training epochs: 50 (with early stopping)
+- Batch size: 32
+- Learning rate: 0.001
+
+### 5.5 Training and Validation
+Each model underwent rigorous training with validation-based early stopping (patience=10 epochs) to prevent overfitting. Validation loss was monitored to ensure optimal convergence and generalization performance.
+
+## 6. Model Evaluation and Performance Assessment
+
+Comprehensive evaluation metrics were employed to assess predictive skill across multiple dimensions.
+
+### 6.1 Primary Evaluation Metrics
+Model performance was quantified using four complementary metrics:
+
+- **Root Mean Square Error (RMSE)**: Measures average prediction error magnitude, emphasizing larger deviations
+- **Mean Absolute Error (MAE)**: Provides interpretable average absolute deviation
+- **Pearson Correlation (r)**: Assesses temporal pattern reproduction and event timing accuracy
+- **Coefficient of Determination (R²)**: Quantifies variance explained by the model
+
+### 6.2 Taylor Diagram Analysis
+Taylor diagrams were employed for integrative performance visualization, simultaneously displaying:
+- Correlation coefficient
+- Standard deviation ratios
+- Centered Root Mean Square Error (CRMSE)
+
+This graphical representation enables comprehensive model comparison and identification of systematic biases.
+
+### 6.3 Composite Scoring System
+A weighted composite score was developed for optimal model selection, integrating multiple performance aspects:
+
+S = w_{r²} × R²_{norm} + w_r × r_{norm} + w_{rmse} × RMSE_{norm}
+
+Where weights were assigned as: w_{r²} = 0.5, w_r = 0.3, w_{rmse} = 0.2
+
+This scoring system prioritizes variance explanation while considering both accuracy and correlation, with lower scores indicating better performance.
+
+## 7. Century-scale Drought Projection
+
+The final phase involved generating long-term drought projections using the best-performing models.
+
+### 7.1 Optimal Model Selection
+For each station and SPI timescale, the model with the lowest composite score was selected as optimal. This data-driven approach ensures selection of the most appropriate modeling technique for each specific prediction task.
+
+### 7.2 Final Model Training
+Selected models were retrained using the complete historical dataset (1985-2019) with both historical and projected covariates. This comprehensive training maximizes information utilization and enhances generalization to future climate conditions.
+
+### 7.3 Long-term Forecasting
+The fully trained models generated SPI forecasts from 2020 to 2099, providing continuous drought projections across the study domain. This century-scale forecasting capability supports long-term water resource planning and climate adaptation strategies.
+
+### 7.4 Uncertainty and Validation
+Forecast uncertainty was assessed through comparison with historical validation periods, ensuring reliability of long-term projections under evolving climate conditions.
+
+## 8. Visualization and Results Interpretation
+
+Advanced visualization techniques were implemented to facilitate results interpretation and stakeholder communication.
+
+### 8.1 Time Series Plots
+Historical observations, model predictions, and future projections were visualized together, enabling clear assessment of model performance and forecast trajectories.
+
+### 8.2 Seasonal Cycle Analysis
+Monthly patterns in observed and forecasted SPI were compared to evaluate the model's ability to capture seasonal drought dynamics.
+
+### 8.3 Heatmap Representations
+SPI values were displayed as heatmaps organized by year and month, providing intuitive visualization of drought patterns and trends across different temporal scales.
+
+### 8.4 Trend Analysis
+Global and decade-scale trends were computed and visualized, highlighting long-term drought evolution and potential climate change impacts.
+
+This comprehensive methodology integrates advanced machine learning techniques with domain expertise in drought analysis, providing robust century-scale drought projections essential for climate adaptation and water resource management.
