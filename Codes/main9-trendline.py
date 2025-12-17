@@ -935,7 +935,7 @@ class ForecastConfig:
         self.SEED = 42
         self.horizon =  3
         self.window_size = 24  # Increased from 15 to 24 for better pattern capture
-        self.num_epochs = 50  # Increased from 1 to 50 for proper LSTM training
+        self.num_epochs = 150  
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
