@@ -453,8 +453,10 @@ def plot_heatmaps(station, results, outfile):
     plt.close()
 
 def compute_score(df, weights=None):
+    # For drought prediction, prioritize R-squared and correlation over RMSE
+    # Since negative R-squared indicates poor performance
     if weights is None:
-        weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
+        weights = {"r_squared": 0.5, "corr": 0.3, "rmse": 0.2}
 
     def normalize(x):
         rng = x.max() - x.min()
@@ -462,21 +464,22 @@ def compute_score(df, weights=None):
 
     df = df.copy()
 
-
-    df["rmse_n"] = df.groupby(["station", "spi"])["rmse"].transform(normalize)
-    df["crmse_n"] = df.groupby(["station", "spi"])["crmse"].transform(normalize)
+    # For R-squared, higher is better, so we invert it for minimization
+    df["r_squared_inv"] = -df["r_squared"]  # Negative because we want to minimize
+    df["r_squared_n"] = df.groupby(["station", "spi"])["r_squared_inv"].transform(normalize)
 
     # invert correlation (benefit → cost)
     df["corr_inv"] = 1 - df["corr"]
     df["corr_n"] = df.groupby(["station", "spi"])["corr_inv"].transform(normalize)
 
+    df["rmse_n"] = df.groupby(["station", "spi"])["rmse"].transform(normalize)
+
     # final score (lower = better)
     df["score"] = (
-        weights["rmse"] * df["rmse_n"] +
-        weights["crmse"] * df["crmse_n"] +
-        weights["corr"] * df["corr_n"]
+        weights["r_squared"] * df["r_squared_n"] +
+        weights["corr"] * df["corr_n"] +
+        weights["rmse"] * df["rmse_n"]
     )
-
 
     return df
 
@@ -485,12 +488,9 @@ def compute_score(df, weights=None):
 def pick_best_model(model_results, weights=None):
     df = pd.DataFrame(model_results)
 
-    # for col in ["rmse", "crmse", "corr"]:
-    #     df[col] = df[col].astype(float)
-
-    # Since we're comparing models for the same SPI/station, normalize across all models
+    # For drought prediction, prioritize R-squared and correlation
     if weights is None:
-        weights = {"rmse": 0.5, "crmse": 0.3, "corr": 0.2}
+        weights = {"r_squared": 0.5, "corr": 0.3, "rmse": 0.2}
 
     def normalize(x):
         rng = x.max() - x.min()
@@ -498,19 +498,21 @@ def pick_best_model(model_results, weights=None):
 
     df = df.copy()
 
-    # Normalize across all models (no groupby since all are for same SPI)
-    df["rmse_n"] = normalize(df["rmse"])
-    df["crmse_n"] = normalize(df["crmse"])
+    # For R-squared, higher is better, so we invert it for minimization
+    df["r_squared_inv"] = -df["r_squared"]
+    df["r_squared_n"] = normalize(df["r_squared_inv"])
 
     # invert correlation (benefit → cost)
     df["corr_inv"] = 1 - df["corr"]
     df["corr_n"] = normalize(df["corr_inv"])
 
+    df["rmse_n"] = normalize(df["rmse"])
+
     # final score (lower = better)
     df["score"] = (
-        weights["rmse"] * df["rmse_n"] +
-        weights["crmse"] * df["crmse_n"] +
-        weights["corr"] * df["corr_n"]
+        weights["r_squared"] * df["r_squared_n"] +
+        weights["corr"] * df["corr_n"] +
+        weights["rmse"] * df["rmse_n"]
     )
 
     best_idx = df["score"].idxmin()
@@ -539,8 +541,10 @@ def apply_reverse_wavelet(pred_ts, wavelet_info):
 #     return denoised[:len(series)]
 
 def wavelet_denoise(series, wavelet="db4", level=1):
+    # For SPI data, use much less aggressive denoising to preserve drought patterns
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
-    threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(series)))
+    # Use a more conservative threshold for SPI data
+    threshold = np.std(coeffs[-1]) * np.sqrt(2 * np.log(len(series))) * 0.5  # Reduced threshold
     coeffs_denoised = [coeffs[0]] + [pywt.threshold(c, threshold, "soft") for c in coeffs[1:]]
     denoised = pywt.waverec(coeffs_denoised, wavelet=wavelet)
     return denoised[:len(series)], coeffs  # return coeffs for reconstruction
@@ -578,19 +582,25 @@ def calculate_metrics(observed: np.ndarray, predicted: np.ndarray) -> Dict[str, 
     rmse_val = np.sqrt(mean_squared_error(observed, predicted))
     mae_val = mean_absolute_error(observed, predicted)
     mape_val = np.mean(np.abs((observed - predicted) / observed)) * 100
-    
+
+    # Calculate R-squared (coefficient of determination)
+    ss_res = np.sum((observed - predicted) ** 2)
+    ss_tot = np.sum((observed - np.mean(observed)) ** 2)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else np.nan
+
     # Avoid division by zero in CRMSLE calculation
     if std_ref > 0 and std_sim > 0:
         crmse_val = np.sqrt(std_ref**2 + std_sim**2 - 2 * std_ref * std_sim * corr_val)
     else:
         crmse_val = np.nan
         print("Cannot calculate CRMSE due to zero standard deviation")
-    
+
     return {
         "std_ref": std_ref,
         "std_model": std_sim,
         "rmse": rmse_val,
         "corr": corr_val,
+        "r_squared": r_squared,
         "crmse": crmse_val,
         "mae": mae_val,
         "mape": mape_val
@@ -683,32 +693,24 @@ def forecast_covariate_to_2099(df: pd.DataFrame, col: str, config):
         # output_chunk_length=config.horizon,
         n_epochs=config.num_epochs,
         optimizer_kwargs={"lr": 1e-3},
-        training_length=20,
+        training_length=24,
         force_reset=True,
-        batch_size=16,
+        batch_size=32,
         dropout=config.lstm_dropout,
         hidden_dim=config.lstm_hidden_dim,
         n_rnn_layers=config.lstm_layers,
         random_state=config.SEED,
-    # pl_trainer_kwargs={
-    #     "callbacks": [EarlyStopping(
-    #     monitor="val_loss",
-    #     patience=10,
-    #     mode="min"
-    # )]
-    # }
+        pl_trainer_kwargs={
+            "callbacks": [EarlyStopping(
+                monitor="val_loss",
+                patience=10,
+                mode="min"
+            )]
+        }
     )
 
-    model.fit(series_scaled
-              , future_covariates=cyc_cov
-              )
-
-    # model.fit(
-    #     series=train_series,
-    #     future_covariates=cyc_cov_train,
-    #     val_series=val_series,
-    #     val_future_covariates=cyc_cov_val,
-    #     )
+    model.fit(series_scaled, future_covariates=cyc_cov,
+              val_series=val_series, val_future_covariates=cyc_cov_val)
 
     # cyc_cov_for_forecast = cyc_cov.slice(series_scaled.end_time()- pd.DateOffset(months=config.window_size) + pd.DateOffset(months=1), cyc_cov.end_time())
     fc_scaled = model.predict(n=config.months_to_2099, future_covariates=cyc_cov)
@@ -783,19 +785,24 @@ def create_model(model_name: str, config):
         )
     elif model_name in ["LSTM","WTLSTM"] :
         return BlockRNNModel(
-            model="LSTM", 
-            input_chunk_length=config.window_size, 
+            model="LSTM",
+            input_chunk_length=config.window_size,
             output_chunk_length=config.horizon,
-            n_epochs=config.num_epochs, 
+            n_epochs=config.num_epochs,
             optimizer_kwargs={"lr": 1e-3},
-            # training_length=48,
             force_reset=True,
-            batch_size=16,
+            batch_size=32,
             dropout=config.lstm_dropout,
             n_rnn_layers=config.lstm_layers,
-            hidden_dim=config.lstm_hidden_dim, 
+            hidden_dim=config.lstm_hidden_dim,
             random_state=config.SEED,
-            # ,likelihood=GaussianLikelihood()
+            pl_trainer_kwargs={
+                "callbacks": [EarlyStopping(
+                    monitor="train_loss",
+                    patience=10,
+                    mode="min"
+                )]
+            }
         )
     elif model_name == "NHiTS":
         return NHiTSModel(
@@ -803,6 +810,15 @@ def create_model(model_name: str, config):
             output_chunk_length=config.horizon,
             n_epochs=config.num_epochs,
             random_state=config.SEED,
+            batch_size=32,
+            optimizer_kwargs={"lr": 1e-3},
+            pl_trainer_kwargs={
+                "callbacks": [EarlyStopping(
+                    monitor="train_loss",
+                    patience=10,
+                    mode="min"
+                )]
+            }
         )
 
     elif model_name == "TFT":
@@ -812,9 +828,17 @@ def create_model(model_name: str, config):
             hidden_size=config.lstm_hidden_dim,
             lstm_layers=config.lstm_layers,
             dropout=config.lstm_dropout,
-            # attention_dropout=config.lstm_dropout,
             n_epochs=config.num_epochs,
             random_state=config.SEED,
+            batch_size=32,
+            optimizer_kwargs={"lr": 1e-3},
+            pl_trainer_kwargs={
+                "callbacks": [EarlyStopping(
+                    monitor="train_loss",
+                    patience=10,
+                    mode="min"
+                )]
+            }
         )
     
 
@@ -822,8 +846,13 @@ def create_model(model_name: str, config):
 def train_and_forecast_spi(hist, full_cov, config, model_name):
 
     split_point = int(len(hist) * config.train_test_split)
+    val_split = int(split_point * 0.8)  # 80% of training data for training, 20% for validation
+
     train_end = hist.time_index[split_point - 1]
-    train, test = hist.split_before(train_end + pd.Timedelta(days=1))
+    val_end = hist.time_index[val_split - 1]
+
+    train, val_test = hist.split_before(val_end + pd.Timedelta(days=1))
+    val, test = val_test.split_before(train_end + pd.Timedelta(days=1))
 
     if model_name == "WTLSTM":
         train, full_cov, wavelet_info = prepare_wavelet_data(train, full_cov, return_info=True)
@@ -831,29 +860,38 @@ def train_and_forecast_spi(hist, full_cov, config, model_name):
         wavelet_info = None
 
 
-    # scaling
-    use_scaler = model_name in ["SVR", "LSTM","WTLSTM"]
+    # scaling - SPI data is already standardized, only scale for neural models
+    use_scaler = model_name in ["SVR", "LSTM", "WTLSTM", "NHiTS", "TFT"]
     if use_scaler:
         scaler = Scaler()
         hist_s = scaler.fit_transform(hist)
         train_s = scaler.fit_transform(train)
-    
-    
+
         cov_scaler = Scaler()
         full_cov_s = cov_scaler.fit_transform(full_cov)
     else:
         scaler = None
-        hist_s = hist, 
-        train_s = train, 
+        hist_s = hist
+        train_s = train
         full_cov_s = full_cov
 
 
     model = create_model(model_name, config)
 
+    # Split covariates for training and validation
+    cov_train_end = train_s.end_time()
     if model_name == "TFT":
-         model.fit(train_s, future_covariates=full_cov_s)
+        cov_train_s = full_cov_s.slice(full_cov_s.start_time(), cov_train_end)
+        cov_val_s = full_cov_s.slice(cov_train_end + pd.DateOffset(months=1), val.end_time())
+
+        model.fit(train_s, future_covariates=cov_train_s,
+                 val_series=val, val_future_covariates=cov_val_s)
     else:
-        model.fit(train_s, past_covariates=full_cov_s)
+        cov_train_s = full_cov_s.slice(full_cov_s.start_time(), cov_train_end)
+        cov_val_s = full_cov_s.slice(cov_train_end + pd.DateOffset(months=1), val.end_time())
+
+        model.fit(train_s, past_covariates=cov_train_s,
+                 val_series=val, val_past_covariates=cov_val_s)
 
     
     if model_name == "TFT":
@@ -896,14 +934,14 @@ class ForecastConfig:
     def __init__(self):
         self.SEED = 42
         self.horizon =  3
-        self.window_size = 15
-        self.num_epochs = 1
+        self.window_size = 24  # Increased from 15 to 24 for better pattern capture
+        self.num_epochs = 50  # Increased from 1 to 50 for proper LSTM training
         self.input_folder = "./Data/python_spi"
         self.SPI = ["SPI_1", "SPI_3", "SPI_6", "SPI_9", "SPI_12", "SPI_24"]
         self.models_to_test = ["ExtraTrees", "RandomForest", "SVR", "LSTM","WTLSTM","NHiTS", "TFT"]
-        self.train_test_split = 0.8
-        self.lstm_hidden_dim = 64
-        self.lstm_dropout = 0.1
+        self.train_test_split = 0.7  # Reduced from 0.8 to 0.7 for more validation data
+        self.lstm_hidden_dim = 128  # Increased from 64 for better capacity
+        self.lstm_dropout = 0.2  # Increased from 0.1 for better regularization
         self.lstm_layers = 2
 
         ts = datetime.datetime.now().strftime("%m%d%H%M")
@@ -1116,7 +1154,7 @@ if __name__ == "__main__":
     # Save metrics and create Taylor diagrams
     if all_results:
         metrics_df = pd.DataFrame(all_results)
-        for col in ["rmse", "crmse", "corr"]:
+        for col in ["rmse", "crmse", "corr", "r_squared"]:
             metrics_df[col] = metrics_df[col].astype(float)
         metrics_df = compute_score(metrics_df)
     #     metrics_df["score"] = metrics_df["score"].apply(
@@ -1144,5 +1182,5 @@ if __name__ == "__main__":
         # plot_metric_boxplots(metrics_df, config)
         # plot_model_ranking(metrics_df, config)
     
-    print(f"✅ Done! Results saved in: {config.output_folder}")
+    print(f"Done! Results saved in: {config.output_folder}")
 
