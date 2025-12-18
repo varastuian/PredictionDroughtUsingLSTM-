@@ -1071,8 +1071,8 @@ if __name__ == "__main__":
     
     for file in data_files:
         station = os.path.splitext(os.path.basename(file))[0]
-        if station != "40712":
-            continue
+        # if station != "40712":
+        #     continue
         print(f"Processing station: {station}")
         
         df = pd.read_csv(file, parse_dates=["ds"])
